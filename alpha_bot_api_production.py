@@ -20,7 +20,6 @@ sys.path.insert(0, backend_path)
 
 app = Flask(__name__)
 
-# CORS - Permitir requisições do frontend
 CORS(app, resources={
     r"/api/*": {
         "origins": ["https://alphadolar.online", "http://localhost:*"],
