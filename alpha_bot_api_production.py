@@ -1,4 +1,4 @@
-# ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM)
+# ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM) - FIXED
 """
 ALPHA DOLAR 2.0 - API PRODUCTION INTEGRADA
 API Flask que conecta frontend web com bots Python reais
@@ -29,11 +29,25 @@ CORS(app, resources={
     }
 })
 
+# ==================== IMPORTAR CONFIG PRIMEIRO ====================
+
+try:
+    from config import BotConfig
+    CONFIG_LOADED = True
+    print("✅ Config carregado com sucesso!")
+except ImportError:
+    try:
+        from backend.config import BotConfig
+        CONFIG_LOADED = True
+        print("✅ Config carregado de backend/ com sucesso!")
+    except ImportError as e:
+        CONFIG_LOADED = False
+        print(f"⚠️ Erro ao carregar config: {e}")
+
 # ==================== IMPORTAR BOTS REAIS ====================
 
 try:
     from backend.bot import AlphaDolar
-    from backend.config import BotConfig
     from backend.strategies.alpha_bot_1 import AlphaBot1
     from backend.strategies.alpha_bot_balanced import AlphaBotBalanced
     from backend.strategies.test_strategy import TestStrategy
@@ -49,7 +63,7 @@ except ImportError as e:
 # Token Deriv da variável de ambiente
 DERIV_TOKEN = os.getenv('DERIV_TOKEN', '')
 
-if BOTS_AVAILABLE:
+if CONFIG_LOADED and BOTS_AVAILABLE:
     if DERIV_TOKEN:
         BotConfig.DERIV_TOKEN = DERIV_TOKEN
         print(f"✅ Token configurado no BotConfig")
@@ -58,6 +72,7 @@ if BOTS_AVAILABLE:
 else:
     if not DERIV_TOKEN:
         print("⚠️ AVISO: DERIV_TOKEN não configurado!")
+
 # ==================== ESTADO GLOBAL ====================
 
 bots_state = {
@@ -75,6 +90,7 @@ def health():
         'status': 'ok',
         'message': 'Alpha Dolar API Running on Render',
         'bots_available': BOTS_AVAILABLE,
+        'config_loaded': CONFIG_LOADED,
         'token_configured': bool(DERIV_TOKEN),
         'environment': os.getenv('FLASK_ENV', 'production')
     })
@@ -114,6 +130,12 @@ def start_bot():
             return jsonify({
                 'success': False,
                 'error': 'Token Deriv não configurado. Configure DERIV_TOKEN nas variáveis de ambiente.'
+            }), 500
+
+        if not CONFIG_LOADED:
+            return jsonify({
+                'success': False,
+                'error': 'Configuração não carregada. Verifique o arquivo config.py'
             }), 500
 
         bot_type = data.get('bot_type', 'manual')
@@ -378,6 +400,10 @@ if __name__ == '__main__':
         print("✅ BOTS PYTHON REAIS INTEGRADOS!")
     else:
         print("⚠️ MODO SIMULADO (Bots Python não disponíveis)")
+    if CONFIG_LOADED:
+        print("✅ CONFIG CARREGADO!")
+    else:
+        print("⚠️ CONFIG NÃO CARREGADO!")
     print(f"🔑 Token configurado: {'SIM' if DERIV_TOKEN else 'NÃO'}")
     print("=" * 70)
     print(f"🌐 Porta: {port}")
