@@ -38,7 +38,6 @@ class BotConfig:
         
         return True
 
-# Função fora da classe
 def validate_config():
     """Valida se as configurações estão corretas"""
     if not BotConfig.DERIV_TOKEN:
