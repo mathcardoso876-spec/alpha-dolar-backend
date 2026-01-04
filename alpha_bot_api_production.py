@@ -48,12 +48,16 @@ except ImportError as e:
 
 # Token Deriv da variável de ambiente
 DERIV_TOKEN = os.getenv('DERIV_TOKEN', '')
-if not DERIV_TOKEN:
-    print("⚠️ AVISO: DERIV_TOKEN não configurado! Configure nas variáveis de ambiente do Render.")
 
-# Atualizar config
-BotConfig.DERIV_TOKEN = DERIV_TOKEN
-
+if BOTS_AVAILABLE:
+    if DERIV_TOKEN:
+        BotConfig.DERIV_TOKEN = DERIV_TOKEN
+        print(f"✅ Token configurado no BotConfig")
+    else:
+        print("⚠️ AVISO: DERIV_TOKEN não configurado!")
+else:
+    if not DERIV_TOKEN:
+        print("⚠️ AVISO: DERIV_TOKEN não configurado!")
 # ==================== ESTADO GLOBAL ====================
 
 bots_state = {
