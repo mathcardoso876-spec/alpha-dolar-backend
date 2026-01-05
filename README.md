@@ -64,3 +64,4 @@ python alpha_bot_api_production.py
 ## 📝 Licença
 
 Proprietary - Alpha Dolar 2.0
+
