@@ -15,7 +15,7 @@ class AlphaBotBalanced(BaseStrategy):
         super().__init__(name="Alpha Bot Balanced")
         self.min_history = 20
         self.last_signal_tick = 0
-        self.cooldown_ticks = 8
+        self.cooldown_ticks = 15  # AUMENTADO: 8 → 15
         self.total_ticks_received = 0
     
     def should_enter(self, tick_data):
@@ -56,18 +56,19 @@ class AlphaBotBalanced(BaseStrategy):
             
             print(f"[DEBUG] Análise: preço={current_price:.2f}, ma20={ma_20:.2f}, momentum={momentum:.4f}%, vol={volatility:.4f}")
             
+            # THRESHOLDS MAIS RIGOROSOS
             call_conditions = [
                 current_price < ma_20,
-                momentum < -0.05,
-                distance_from_ma < -0.15,
-                volatility > 0.1
+                momentum < -0.08,  # MUDADO: -0.05 → -0.08
+                distance_from_ma < -0.20,  # MUDADO: -0.15 → -0.20
+                volatility > 0.15  # MUDADO: 0.1 → 0.15
             ]
             
             put_conditions = [
                 current_price > ma_20,
-                momentum > 0.05,
-                distance_from_ma > 0.15,
-                volatility > 0.1
+                momentum > 0.08,  # MUDADO: 0.05 → 0.08
+                distance_from_ma > 0.20,  # MUDADO: 0.15 → 0.20
+                volatility > 0.15  # MUDADO: 0.1 → 0.15
             ]
             
             call_score = sum(call_conditions)
@@ -75,21 +76,22 @@ class AlphaBotBalanced(BaseStrategy):
             
             print(f"[DEBUG] Scores: CALL={call_score}/4, PUT={put_score}/4")
             
-            min_conditions = 3
+            # EXIGE TODAS AS 4 CONDIÇÕES
+            min_conditions = 4  # MUDADO: 3 → 4
             
             if call_score >= min_conditions:
-                confidence = (call_score / 4) * 0.85 + 0.15
+                confidence = 0.90  # 90% de confiança quando todas condições atendidas
                 self.last_signal_tick = self.total_ticks_received
                 print(f"🎯 SINAL DETECTADO! CALL com {confidence*100:.1f}% confiança")
                 return True, "CALL", confidence
             
             if put_score >= min_conditions:
-                confidence = (put_score / 4) * 0.85 + 0.15
+                confidence = 0.90  # 90% de confiança quando todas condições atendidas
                 self.last_signal_tick = self.total_ticks_received
                 print(f"🎯 SINAL DETECTADO! PUT com {confidence*100:.1f}% confiança")
                 return True, "PUT", confidence
             
-            print(f"[DEBUG] Nenhum sinal (precisa 3/4)")
+            print(f"[DEBUG] Nenhum sinal (precisa 4/4)")
             return False, None, 0.0
             
         except Exception as e:
@@ -100,7 +102,7 @@ class AlphaBotBalanced(BaseStrategy):
         """Retorna parâmetros do contrato"""
         return {
             "contract_type": direction,
-            "duration": 1,
+            "duration": 3,  # MUDADO: 1 → 3 ticks
             "duration_unit": "t",
             "symbol": BotConfig.DEFAULT_SYMBOL,
             "basis": BotConfig.BASIS
