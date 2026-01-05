@@ -13,10 +13,10 @@ class AlphaBotBalanced(BaseStrategy):
     
     def __init__(self):
         super().__init__(name="Alpha Bot Balanced")
-        self.min_history = 20  # Só precisa de 20 ticks (vs 100+ do AlphaBot1)
+        self.min_history = 20
         self.last_signal_tick = 0
-        self.cooldown_ticks = 8  # Espera 8 ticks entre sinais
-        self.total_ticks_received = 0  # Contador independente que sempre cresce
+        self.cooldown_ticks = 8
+        self.total_ticks_received = 0
     
     def should_enter(self, tick_data):
         """
@@ -26,84 +26,69 @@ class AlphaBotBalanced(BaseStrategy):
         - Volatilidade moderada
         """
         self.update_tick(tick_data)
-        self.total_ticks_received += 1  # Incrementa a cada tick recebido
+        self.total_ticks_received += 1
         
-        # DEBUG: Log para ver se está sendo chamado
         print(f"[DEBUG] should_enter chamado! Histórico: {len(self.ticks_history)}/{self.min_history}, Total ticks: {self.total_ticks_received}")
         
-        # Precisa de histórico mínimo
         if len(self.ticks_history) < self.min_history:
             print(f"[DEBUG] Aguardando histórico completo...")
             return False, None, 0.0
         
-        # Cooldown entre operações - USA O CONTADOR TOTAL
         ticks_since_last = self.total_ticks_received - self.last_signal_tick
         if ticks_since_last < self.cooldown_ticks:
             print(f"[DEBUG] Cooldown ativo: {ticks_since_last}/{self.cooldown_ticks} ticks")
             return False, None, 0.0
         
         try:
-            # Pega últimos ticks - CONVERTER DEQUE PARA LISTA!
             recent_10 = [tick['quote'] if isinstance(tick, dict) else tick for tick in list(self.ticks_history)[-10:]]
             recent_20 = [tick['quote'] if isinstance(tick, dict) else tick for tick in list(self.ticks_history)[-20:]]
             
             current_price = recent_10[-1]
             
-            # Calcula médias
             ma_10 = statistics.mean(recent_10)
             ma_20 = statistics.mean(recent_20)
             
-            # Calcula momentum (velocidade de mudança)
             momentum = (recent_10[-1] - recent_10[0]) / recent_10[0] * 100
             
-            # Calcula volatilidade (desvio padrão)
             volatility = statistics.stdev(recent_10) if len(recent_10) > 1 else 0
             
-            # Distância da média de 20
             distance_from_ma = ((current_price - ma_20) / ma_20) * 100
             
             print(f"[DEBUG] Análise: preço={current_price:.2f}, ma20={ma_20:.2f}, momentum={momentum:.4f}%, vol={volatility:.4f}")
             
-            # ==== LÓGICA DE ENTRADA ====
-            
-            # Sinal de CALL (compra)
             call_conditions = [
-                current_price < ma_20,  # Preço abaixo da média (oversold)
-                momentum < -0.05,  # Momentum negativo (caindo)
-                distance_from_ma < -0.15,  # Pelo menos 0.15% abaixo da média
-                volatility > 0.1  # Volatilidade mínima
+                current_price < ma_20,
+                momentum < -0.05,
+                distance_from_ma < -0.15,
+                volatility > 0.1
             ]
             
-            # Sinal de PUT (venda)
             put_conditions = [
-                current_price > ma_20,  # Preço acima da média (overbought)
-                momentum > 0.05,  # Momentum positivo (subindo)
-                distance_from_ma > 0.15,  # Pelo menos 0.15% acima da média
-                volatility > 0.1  # Volatilidade mínima
+                current_price > ma_20,
+                momentum > 0.05,
+                distance_from_ma > 0.15,
+                volatility > 0.1
             ]
             
-            # Conta quantas condições foram atendidas
             call_score = sum(call_conditions)
             put_score = sum(put_conditions)
             
             print(f"[DEBUG] Scores: CALL={call_score}/4, PUT={put_score}/4")
             
-            # Precisa de pelo menos 3 de 4 condições
             min_conditions = 3
             
             if call_score >= min_conditions:
-                confidence = (call_score / 4) * 0.85 + 0.15  # 65-85%
-                self.last_signal_tick = self.total_ticks_received  # USA O CONTADOR TOTAL
+                confidence = (call_score / 4) * 0.85 + 0.15
+                self.last_signal_tick = self.total_ticks_received
                 print(f"🎯 SINAL DETECTADO! CALL com {confidence*100:.1f}% confiança")
                 return True, "CALL", confidence
             
             if put_score >= min_conditions:
-                confidence = (put_score / 4) * 0.85 + 0.15  # 65-85%
-                self.last_signal_tick = self.total_ticks_received  # USA O CONTADOR TOTAL
+                confidence = (put_score / 4) * 0.85 + 0.15
+                self.last_signal_tick = self.total_ticks_received
                 print(f"🎯 SINAL DETECTADO! PUT com {confidence*100:.1f}% confiança")
                 return True, "PUT", confidence
             
-            # Nenhum sinal forte
             print(f"[DEBUG] Nenhum sinal (precisa 3/4)")
             return False, None, 0.0
             
@@ -115,7 +100,7 @@ class AlphaBotBalanced(BaseStrategy):
         """Retorna parâmetros do contrato"""
         return {
             "contract_type": direction,
-            "duration": 1,  # 1 tick
+            "duration": 1,
             "duration_unit": "t",
             "symbol": BotConfig.DEFAULT_SYMBOL,
             "basis": BotConfig.BASIS
