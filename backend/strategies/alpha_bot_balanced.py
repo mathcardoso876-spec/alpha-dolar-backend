@@ -133,19 +133,6 @@ class AlphaBotBalanced(BaseStrategy):
             'indicators': 'MA10, MA20, Momentum, Volatilidade',
             'risk_level': 'Médio'
         }
-```
-
----
-
-## 🔑 **MUDANÇAS FEITAS:**
-
-1. ✅ **Linha 18:** Adicionado `self.total_ticks_received = 0`
-2. ✅ **Linha 28:** Adicionado `self.total_ticks_received += 1`
-3. ✅ **Linha 31:** Log mostra total de ticks
-4. ✅ **Linha 39:** Cooldown usa `self.total_ticks_received`
-5. ✅ **Linhas 91 e 97:** Sinais usam `self.total_ticks_received`
-
----
 
 ## 📝 **COMMIT:**
 ```
