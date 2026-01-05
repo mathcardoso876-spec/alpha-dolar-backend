@@ -131,22 +131,3 @@ class AlphaBotBalanced(BaseStrategy):
             'indicators': 'MA10, MA20, Momentum, Volatilidade',
             'risk_level': 'Médio'
         }
-```
-
----
-
-## 🔑 **ADICIONEI VÁRIOS LOGS:**
-
-- Linha 29: Mostra histórico atual
-- Linha 33: Avisa quando aguardando histórico
-- Linha 39: Mostra cooldown
-- Linha 55: Mostra análise dos indicadores
-- Linha 79: Mostra scores CALL/PUT
-- Linhas 87/94: Confirma quando detecta sinal
-- Linha 100: Avisa quando não há sinal
-
----
-
-## 📝 **COMMIT:**
-```
-Add comprehensive debug logging
