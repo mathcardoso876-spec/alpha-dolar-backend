@@ -16,6 +16,7 @@ class AlphaBotBalanced(BaseStrategy):
         self.min_history = 20  # Só precisa de 20 ticks (vs 100+ do AlphaBot1)
         self.last_signal_tick = 0
         self.cooldown_ticks = 8  # Espera 8 ticks entre sinais
+        self.total_ticks_received = 0  # Contador independente que sempre cresce
     
     def should_enter(self, tick_data):
         """
@@ -25,17 +26,18 @@ class AlphaBotBalanced(BaseStrategy):
         - Volatilidade moderada
         """
         self.update_tick(tick_data)
+        self.total_ticks_received += 1  # Incrementa a cada tick recebido
         
         # DEBUG: Log para ver se está sendo chamado
-        print(f"[DEBUG] should_enter chamado! Histórico: {len(self.ticks_history)}/{self.min_history}")
+        print(f"[DEBUG] should_enter chamado! Histórico: {len(self.ticks_history)}/{self.min_history}, Total ticks: {self.total_ticks_received}")
         
         # Precisa de histórico mínimo
         if len(self.ticks_history) < self.min_history:
             print(f"[DEBUG] Aguardando histórico completo...")
             return False, None, 0.0
         
-        # Cooldown entre operações
-        ticks_since_last = len(self.ticks_history) - self.last_signal_tick
+        # Cooldown entre operações - USA O CONTADOR TOTAL
+        ticks_since_last = self.total_ticks_received - self.last_signal_tick
         if ticks_since_last < self.cooldown_ticks:
             print(f"[DEBUG] Cooldown ativo: {ticks_since_last}/{self.cooldown_ticks} ticks")
             return False, None, 0.0
@@ -91,13 +93,13 @@ class AlphaBotBalanced(BaseStrategy):
             
             if call_score >= min_conditions:
                 confidence = (call_score / 4) * 0.85 + 0.15  # 65-85%
-                self.last_signal_tick = len(self.ticks_history)
+                self.last_signal_tick = self.total_ticks_received  # USA O CONTADOR TOTAL
                 print(f"🎯 SINAL DETECTADO! CALL com {confidence*100:.1f}% confiança")
                 return True, "CALL", confidence
             
             if put_score >= min_conditions:
                 confidence = (put_score / 4) * 0.85 + 0.15  # 65-85%
-                self.last_signal_tick = len(self.ticks_history)
+                self.last_signal_tick = self.total_ticks_received  # USA O CONTADOR TOTAL
                 print(f"🎯 SINAL DETECTADO! PUT com {confidence*100:.1f}% confiança")
                 return True, "PUT", confidence
             
@@ -131,3 +133,20 @@ class AlphaBotBalanced(BaseStrategy):
             'indicators': 'MA10, MA20, Momentum, Volatilidade',
             'risk_level': 'Médio'
         }
+```
+
+---
+
+## 🔑 **MUDANÇAS FEITAS:**
+
+1. ✅ **Linha 18:** Adicionado `self.total_ticks_received = 0`
+2. ✅ **Linha 28:** Adicionado `self.total_ticks_received += 1`
+3. ✅ **Linha 31:** Log mostra total de ticks
+4. ✅ **Linha 39:** Cooldown usa `self.total_ticks_received`
+5. ✅ **Linhas 91 e 97:** Sinais usam `self.total_ticks_received`
+
+---
+
+## 📝 **COMMIT:**
+```
+Fix: Resolve infinite cooldown bug using independent tick counter
