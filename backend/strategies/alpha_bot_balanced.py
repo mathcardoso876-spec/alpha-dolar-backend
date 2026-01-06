@@ -15,7 +15,7 @@ class AlphaBotBalanced(BaseStrategy):
         super().__init__(name="Alpha Bot Balanced")
         self.min_history = 20
         self.last_signal_tick = 0
-        self.cooldown_ticks = 12  # Meio termo: 8 → 12 → 15
+        self.cooldown_ticks = 15  # Aumentado: menos trades, mais qualidade
         self.total_ticks_received = 0
     
     def should_enter(self, tick_data):
@@ -23,7 +23,7 @@ class AlphaBotBalanced(BaseStrategy):
         Estratégia baseada em:
         - Momentum de curto prazo (últimos 10 ticks)
         - Reversão à média
-        - Volatilidade moderada
+        - Volatilidade forte
         """
         self.update_tick(tick_data)
         self.total_ticks_received += 1
@@ -56,19 +56,19 @@ class AlphaBotBalanced(BaseStrategy):
             
             print(f"[DEBUG] Análise: preço={current_price:.2f}, ma20={ma_20:.2f}, momentum={momentum:.4f}%, vol={volatility:.4f}, dist={distance_from_ma:.4f}%")
             
-            # THRESHOLDS BALANCEADOS (não muito fracos, não extremos)
+            # CONDIÇÕES MAIS RIGOROSAS - SÓ SINAIS FORTES
             call_conditions = [
                 current_price < ma_20,
-                momentum < -0.06,  # Meio termo: -0.05 vs -0.08
-                distance_from_ma < -0.18,  # Meio termo: -0.15 vs -0.20
-                volatility > 0.12  # Meio termo: 0.10 vs 0.15
+                momentum < -0.08,  # Momentum FORTE (era -0.06)
+                distance_from_ma < -0.20,  # Distância GRANDE (era -0.18)
+                volatility > 0.20  # Volatilidade ALTA (era 0.12)
             ]
             
             put_conditions = [
                 current_price > ma_20,
-                momentum > 0.06,  # Meio termo
-                distance_from_ma > 0.18,  # Meio termo
-                volatility > 0.12  # Meio termo
+                momentum > 0.08,  # Momentum FORTE
+                distance_from_ma > 0.20,  # Distância GRANDE
+                volatility > 0.20  # Volatilidade ALTA
             ]
             
             call_score = sum(call_conditions)
@@ -76,22 +76,44 @@ class AlphaBotBalanced(BaseStrategy):
             
             print(f"[DEBUG] Scores: CALL={call_score}/4, PUT={put_score}/4")
             
-            # VOLTA PARA 3/4 mas com thresholds melhores
-            min_conditions = 3
-            
-            if call_score >= min_conditions:
-                confidence = (call_score / 4) * 0.85 + 0.15  # 65-85%
+            # ACEITA 3/4 OU 4/4
+            # MAS 3/4 precisa ter TODAS as condições MUITO fortes
+            if call_score >= 3:
+                # Se 3/4, verifica se são condições REALMENTE fortes
+                if call_score == 3:
+                    # Precisa de momentum E volatilidade E distância EXTRAS
+                    extra_strong = (
+                        abs(momentum) > 0.10 and  # Momentum EXTRA forte
+                        volatility > 0.25 and  # Volatilidade EXTRA alta
+                        abs(distance_from_ma) > 0.25  # Distância EXTRA grande
+                    )
+                    if not extra_strong:
+                        print(f"[DEBUG] CALL 3/4 mas condições não são fortes o suficiente")
+                        return False, None, 0.0
+                
+                confidence = (call_score / 4) * 0.90 + 0.10  # 70-90%
                 self.last_signal_tick = self.total_ticks_received
                 print(f"🎯 SINAL DETECTADO! CALL com {confidence*100:.1f}% confiança ({call_score}/4)")
                 return True, "CALL", confidence
             
-            if put_score >= min_conditions:
-                confidence = (put_score / 4) * 0.85 + 0.15  # 65-85%
+            if put_score >= 3:
+                # Se 3/4, verifica se são condições REALMENTE fortes
+                if put_score == 3:
+                    extra_strong = (
+                        abs(momentum) > 0.10 and
+                        volatility > 0.25 and
+                        abs(distance_from_ma) > 0.25
+                    )
+                    if not extra_strong:
+                        print(f"[DEBUG] PUT 3/4 mas condições não são fortes o suficiente")
+                        return False, None, 0.0
+                
+                confidence = (put_score / 4) * 0.90 + 0.10  # 70-90%
                 self.last_signal_tick = self.total_ticks_received
                 print(f"🎯 SINAL DETECTADO! PUT com {confidence*100:.1f}% confiança ({put_score}/4)")
                 return True, "PUT", confidence
             
-            print(f"[DEBUG] Nenhum sinal (precisa 3/4)")
+            print(f"[DEBUG] Nenhum sinal forte o suficiente")
             return False, None, 0.0
             
         except Exception as e:
@@ -102,7 +124,7 @@ class AlphaBotBalanced(BaseStrategy):
         """Retorna parâmetros do contrato"""
         return {
             "contract_type": direction,
-            "duration": 2,  # Meio termo: 1 vs 3 ticks
+            "duration": 4,  # 4 ticks (8-12 segundos) - mais tempo para tendência se confirmar
             "duration_unit": "t",
             "symbol": BotConfig.DEFAULT_SYMBOL,
             "basis": BotConfig.BASIS
@@ -115,8 +137,8 @@ class AlphaBotBalanced(BaseStrategy):
             'tier': 'Intermediária',
             'min_history': self.min_history,
             'cooldown': self.cooldown_ticks,
-            'expected_win_rate': '55-60%',
-            'trades_per_hour': '3-8',
+            'expected_win_rate': '55-65%',
+            'trades_per_hour': '2-4',
             'indicators': 'MA10, MA20, Momentum, Volatilidade',
             'risk_level': 'Médio'
         }
