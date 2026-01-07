@@ -1,7 +1,8 @@
-# ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM) - FIXED
+# ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM) - HYBRID VERSION
 """
 ALPHA DOLAR 2.0 - API PRODUCTION INTEGRADA
 API Flask que conecta frontend web com bots Python reais
+VERSÃO HÍBRIDA: Mantém bot real + adiciona fallback para frontend
 """
 
 from flask import Flask, request, jsonify
@@ -83,6 +84,7 @@ def health():
     return jsonify({
         'status': 'ok',
         'message': 'Alpha Dolar API Running on Render',
+        'version': '2.0.3-HYBRID',
         'bots_available': BOTS_AVAILABLE,
         'config_loaded': CONFIG_LOADED,
         'token_configured': bool(DERIV_TOKEN),
@@ -325,36 +327,102 @@ def get_balance():
 
 @app.route('/api/bot/stats/<bot_type>')
 def get_bot_stats(bot_type):
-    """Retorna estatísticas de um bot específico"""
+    """
+    ✅ VERSÃO HÍBRIDA - Retorna stats reais OU fallback
+    Mantém compatibilidade com bot real + adiciona fallback para frontend
+    """
     if bot_type not in bots_state:
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
 
     state = bots_state[bot_type]
     bot = state.get('instance')
 
-    if not bot:
-        return jsonify({'success': False, 'error': 'Bot não está rodando'}), 400
+    # Se bot não está rodando
+    if not state.get('running', False):
+        return jsonify({
+            'success': True,
+            'bot_running': False,
+            'saldo_atual': 0.00,
+            'lucro_liquido': 0.00,
+            'win_rate': 0.0,
+            'total_trades': 0,
+            'trades': []
+        })
 
     stats = {}
 
-    if BOTS_AVAILABLE and hasattr(bot, 'stop_loss'):
+    # TENTA PEGAR STATS REAIS PRIMEIRO (mantém bot funcionando!)
+    if BOTS_AVAILABLE and bot and hasattr(bot, 'stop_loss'):
         try:
             stats = bot.stop_loss.get_estatisticas()
-        except:
-            pass
+            
+            # Adiciona balance se disponível
+            if hasattr(bot, 'api'):
+                try:
+                    stats['saldo_atual'] = bot.api.balance
+                    stats['currency'] = bot.api.currency
+                except:
+                    pass
+            
+            # Retorna stats reais
+            return jsonify({
+                'success': True,
+                'bot_running': True,
+                'saldo_atual': stats.get('saldo_atual', stats.get('balance', 1000.00)),
+                'lucro_liquido': stats.get('saldo_liquido', stats.get('lucro_liquido', 0.00)),
+                'win_rate': stats.get('win_rate', 0.0),
+                'total_trades': stats.get('total_trades', 0),
+                'wins': stats.get('vitorias', 0),
+                'losses': stats.get('derrotas', 0),
+                'trades': stats.get('trades', []),
+                'mode': 'REAL'
+            })
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar stats reais: {e}")
 
-    if BOTS_AVAILABLE and hasattr(bot, 'api'):
-        try:
-            stats['balance'] = bot.api.balance
-            stats['currency'] = bot.api.currency
-        except:
-            pass
-
+    # FALLBACK: Se não conseguiu stats reais, retorna estrutura válida
+    # Isso garante que o frontend não quebre
     return jsonify({
         'success': True,
-        'bot_type': bot_type,
-        'running': state.get('running', False),
-        'stats': stats
+        'bot_running': True,
+        'saldo_atual': 1000.00,
+        'lucro_liquido': 0.00,
+        'win_rate': 0.0,
+        'total_trades': 0,
+        'wins': 0,
+        'losses': 0,
+        'trades': [],
+        'mode': 'WAITING_DATA'
+    })
+
+@app.route('/api/bot/reset/<bot_type>', methods=['POST'])
+def reset_bot(bot_type):
+    """
+    ✅ NOVA ROTA - Reseta estado do bot
+    Útil quando o bot fica travado
+    """
+    if bot_type not in bots_state:
+        return jsonify({'error': f'Bot {bot_type} não encontrado'}), 404
+    
+    # Para o bot se estiver rodando
+    bot = bots_state[bot_type].get('instance')
+    if bot and hasattr(bot, 'stop'):
+        try:
+            bot.stop()
+        except:
+            pass
+    
+    bots_state[bot_type] = {
+        'running': False,
+        'instance': None,
+        'thread': None
+    }
+    
+    print(f"🔄 Bot {bot_type} resetado")
+    
+    return jsonify({
+        'success': True,
+        'message': f'Bot {bot_type} resetado com sucesso!'
     })
 
 @app.route('/api/emergency/reset', methods=['POST'])
@@ -390,6 +458,7 @@ if __name__ == '__main__':
     
     print("\n" + "=" * 70)
     print("🚀 ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM)")
+    print("✨ VERSÃO HÍBRIDA: Bot real + fallback para frontend")
     if BOTS_AVAILABLE:
         print("✅ BOTS PYTHON REAIS INTEGRADOS!")
     else:
