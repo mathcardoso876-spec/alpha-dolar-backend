@@ -1,8 +1,8 @@
-# ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM) - HYBRID VERSION
+# ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM) - DEMO/REAL VERSION
 """
 ALPHA DOLAR 2.0 - API PRODUCTION INTEGRADA
 API Flask que conecta frontend web com bots Python reais
-VERSÃO HÍBRIDA: Mantém bot real + adiciona fallback para frontend
+VERSÃO COM SISTEMA DEMO/REAL: Permite alternar entre contas
 """
 
 from flask import Flask, request, jsonify
@@ -53,20 +53,25 @@ except ImportError as e:
     print(f"⚠️ Erro ao importar bots: {e}")
     print("   Sistema funcionará em modo simulado apenas")
 
-# ==================== CONFIGURAÇÃO ====================
+# ==================== CONFIGURAÇÃO DEMO/REAL ====================
 
-# Token Deriv da variável de ambiente
-DERIV_TOKEN = os.getenv('DERIV_TOKEN', '')
+# Tokens DEMO e REAL
+DERIV_TOKEN_DEMO = os.getenv('DERIV_TOKEN_DEMO', '')
+DERIV_TOKEN_REAL = os.getenv('DERIV_TOKEN_REAL', '')
+
+# Estado global do modo (demo ou real)
+current_account_mode = 'demo'  # Inicia em DEMO por segurança
+current_token = DERIV_TOKEN_DEMO
+
+print("\n" + "="*70)
+print("🔑 CONFIGURAÇÃO DE TOKENS:")
+print(f"   Token DEMO: {'✅ Configurado' if DERIV_TOKEN_DEMO else '❌ NÃO configurado'}")
+print(f"   Token REAL: {'✅ Configurado' if DERIV_TOKEN_REAL else '❌ NÃO configurado'}")
+print(f"   Modo inicial: {current_account_mode.upper()}")
+print("="*70 + "\n")
 
 if CONFIG_LOADED and BOTS_AVAILABLE:
-    if DERIV_TOKEN:
-        BotConfig.DERIV_TOKEN = DERIV_TOKEN
-        print(f"✅ Token configurado no BotConfig")
-    else:
-        print("⚠️ AVISO: DERIV_TOKEN não configurado!")
-else:
-    if not DERIV_TOKEN:
-        print("⚠️ AVISO: DERIV_TOKEN não configurado!")
+    BotConfig.API_TOKEN = current_token
 
 # ==================== ESTADO GLOBAL ====================
 
@@ -77,17 +82,158 @@ bots_state = {
     'ia_avancado': {'running': False, 'instance': None, 'thread': None}
 }
 
-# ==================== ROTAS API ====================
+# ==================== ROTAS API - DEMO/REAL ====================
+
+@app.route('/api/account/mode', methods=['GET', 'POST'])
+def account_mode():
+    """
+    GET: Retorna modo atual (demo/real)
+    POST: Muda modo (demo/real)
+    """
+    global current_account_mode, current_token
+    
+    if request.method == 'GET':
+        # Retorna modo atual
+        return jsonify({
+            'success': True,
+            'mode': current_account_mode,
+            'demo_available': bool(DERIV_TOKEN_DEMO),
+            'real_available': bool(DERIV_TOKEN_REAL)
+        })
+    
+    # POST - Mudar modo
+    data = request.get_json()
+    new_mode = data.get('mode', 'demo')
+    
+    if new_mode not in ['demo', 'real']:
+        return jsonify({
+            'success': False,
+            'error': 'Modo inválido. Use "demo" ou "real"'
+        }), 400
+    
+    # Verifica se token existe
+    if new_mode == 'demo' and not DERIV_TOKEN_DEMO:
+        return jsonify({
+            'success': False,
+            'error': 'Token DEMO não configurado. Configure DERIV_TOKEN_DEMO no Render.'
+        }), 400
+    
+    if new_mode == 'real' and not DERIV_TOKEN_REAL:
+        return jsonify({
+            'success': False,
+            'error': 'Token REAL não configurado. Configure DERIV_TOKEN_REAL no Render.'
+        }), 400
+    
+    # Para todos os bots rodando antes de mudar
+    stopped_bots = []
+    for bot_type, state in bots_state.items():
+        if state.get('running', False):
+            bot = state.get('instance')
+            if bot and hasattr(bot, 'stop'):
+                try:
+                    bot.stop()
+                    stopped_bots.append(bot_type)
+                except:
+                    pass
+            state['running'] = False
+    
+    # Muda modo e token
+    current_account_mode = new_mode
+    current_token = DERIV_TOKEN_DEMO if new_mode == 'demo' else DERIV_TOKEN_REAL
+    
+    # Atualiza BotConfig
+    if CONFIG_LOADED and BOTS_AVAILABLE:
+        BotConfig.API_TOKEN = current_token
+    
+    print(f"\n{'='*70}")
+    print(f"🔄 MODO ALTERADO: {new_mode.upper()}")
+    if stopped_bots:
+        print(f"🛑 Bots parados: {', '.join(stopped_bots)}")
+    print(f"{'='*70}\n")
+    
+    return jsonify({
+        'success': True,
+        'mode': current_account_mode,
+        'message': f'Modo alterado para {new_mode.upper()}',
+        'stopped_bots': stopped_bots
+    })
+
+@app.route('/api/account/balance')
+def get_account_balance():
+    """
+    Retorna saldo da conta atual (DEMO ou REAL)
+    """
+    # Tenta pegar de algum bot rodando
+    for bot_type, state in bots_state.items():
+        bot = state.get('instance')
+        if bot and BOTS_AVAILABLE and hasattr(bot, 'api'):
+            try:
+                balance = bot.api.balance
+                currency = bot.api.currency
+                return jsonify({
+                    'success': True,
+                    'balance': balance,
+                    'currency': currency,
+                    'mode': current_account_mode,
+                    'formatted': f"${balance:,.2f}"
+                })
+            except:
+                pass
+    
+    # Se nenhum bot rodando, tenta conectar direto
+    if BOTS_AVAILABLE:
+        try:
+            from deriv_api import DerivAPI
+            api = DerivAPI()
+            
+            # Temporariamente muda token
+            old_token = BotConfig.API_TOKEN if CONFIG_LOADED else None
+            if CONFIG_LOADED:
+                BotConfig.API_TOKEN = current_token
+            
+            if api.connect() and api.authorize():
+                balance = api.balance
+                currency = api.currency
+                api.disconnect()
+                
+                # Restaura token
+                if old_token and CONFIG_LOADED:
+                    BotConfig.API_TOKEN = old_token
+                
+                return jsonify({
+                    'success': True,
+                    'balance': balance,
+                    'currency': currency,
+                    'mode': current_account_mode,
+                    'formatted': f"${balance:,.2f}"
+                })
+        except Exception as e:
+            print(f"❌ Erro ao buscar saldo direto: {e}")
+    
+    # Fallback
+    fallback_balance = 0.00 if current_account_mode == 'real' else 10000.00
+    return jsonify({
+        'success': True,
+        'balance': fallback_balance,
+        'currency': 'USD',
+        'mode': current_account_mode,
+        'formatted': f"${fallback_balance:,.2f}",
+        'note': 'Saldo de fallback - bot não conectado'
+    })
+
+# ==================== ROTAS API PADRÃO ====================
 
 @app.route('/api/health')
 def health():
     return jsonify({
         'status': 'ok',
         'message': 'Alpha Dolar API Running on Render',
-        'version': '2.0.4-STOP-FIX',
+        'version': '2.0.5-DEMO-REAL',
         'bots_available': BOTS_AVAILABLE,
         'config_loaded': CONFIG_LOADED,
-        'token_configured': bool(DERIV_TOKEN),
+        'demo_token_configured': bool(DERIV_TOKEN_DEMO),
+        'real_token_configured': bool(DERIV_TOKEN_REAL),
+        'current_mode': current_account_mode,
         'environment': os.getenv('FLASK_ENV', 'production')
     })
 
@@ -112,7 +258,7 @@ def get_bots_status():
 
 @app.route('/api/bot/start', methods=['POST'])
 def start_bot():
-    """Iniciar bot - VERSÃO RENDER.COM"""
+    """Iniciar bot - VERSÃO COM DEMO/REAL"""
     try:
         data = request.get_json()
 
@@ -122,10 +268,11 @@ def start_bot():
                 'error': 'Dados não fornecidos'
             }), 400
 
-        if not DERIV_TOKEN:
+        # Verifica se token do modo atual existe
+        if not current_token:
             return jsonify({
                 'success': False,
-                'error': 'Token Deriv não configurado. Configure DERIV_TOKEN nas variáveis de ambiente.'
+                'error': f'Token {current_account_mode.upper()} não configurado. Configure DERIV_TOKEN_{current_account_mode.upper()} no Render.'
             }), 500
 
         if not CONFIG_LOADED:
@@ -138,8 +285,9 @@ def start_bot():
         config = data.get('config', {})
 
         print(f"\n{'='*60}")
-        print(f"📥 Recebido pedido para iniciar bot: {bot_type}")
-        print(f"⚙️ Config recebida: {config}")
+        print(f"📥 Iniciando bot: {bot_type}")
+        print(f"🔑 Modo: {current_account_mode.upper()}")
+        print(f"⚙️  Config: {config}")
         print(f"{'='*60}\n")
 
         if bot_type not in bots_state:
@@ -159,9 +307,9 @@ def start_bot():
             BotConfig.STAKE_INICIAL = config.get('stake_inicial', 0.35)
             BotConfig.LUCRO_ALVO = config.get('lucro_alvo', 2.0)
             BotConfig.LIMITE_PERDA = config.get('limite_perda', 5.0)
+            BotConfig.API_TOKEN = current_token  # USA TOKEN DO MODO ATUAL
 
             try:
-                # Usar AlphaBotBalanced (intermediário)
                 print("⚡ Usando AlphaBotBalanced - estratégia intermediária")
                 strategy = AlphaBotBalanced()
                 print(f"✅ Estratégia carregada: {strategy.name}")
@@ -205,20 +353,20 @@ def start_bot():
                 'thread': thread
             }
 
-            print(f"✅ Bot {bot_type} iniciado com sucesso!")
+            print(f"✅ Bot {bot_type} iniciado em modo {current_account_mode.upper()}!")
 
             return jsonify({
                 'success': True,
                 'message': f'Bot {bot_type} iniciado com AlphaBotBalanced!',
                 'bot_type': bot_type,
+                'mode': current_account_mode,
                 'config': {
                     'symbol': BotConfig.DEFAULT_SYMBOL,
                     'stake_inicial': BotConfig.STAKE_INICIAL,
                     'lucro_alvo': BotConfig.LUCRO_ALVO,
                     'limite_perda': BotConfig.LIMITE_PERDA,
                     'strategy': strategy.name
-                },
-                'mode': 'REAL BOT - BALANCED STRATEGY'
+                }
             })
 
         return jsonify({
@@ -257,9 +405,6 @@ def stop_bot():
                 'error': f'Bot {bot_type} não encontrado'
             }), 400
 
-        # ✅ REMOVIDO: Verificação que causava erro 400
-        # Agora aceita parar bot mesmo se já estiver parado
-
         bot = bots_state[bot_type].get('instance')
 
         if bot:
@@ -271,7 +416,7 @@ def stop_bot():
             elif hasattr(bot, 'running'):
                 bot.running = False
 
-        # ✅ SEMPRE marca como parado
+        # SEMPRE marca como parado
         bots_state[bot_type]['running'] = False
 
         stats = {}
@@ -289,11 +434,6 @@ def stop_bot():
             'stats': stats
         })
 
-        return jsonify({
-            'success': False,
-            'error': 'Instância do bot não encontrada'
-        }), 500
-
     except Exception as e:
         print(f"❌ ERRO em stop_bot: {e}")
         return jsonify({
@@ -303,42 +443,18 @@ def stop_bot():
 
 @app.route('/api/balance')
 def get_balance():
-    """Retorna saldo atual da conta Deriv"""
-    for bot_type, state in bots_state.items():
-        bot = state.get('instance')
-        if bot and BOTS_AVAILABLE and hasattr(bot, 'api'):
-            try:
-                balance = bot.api.balance
-                currency = bot.api.currency
-                return jsonify({
-                    'success': True,
-                    'balance': balance,
-                    'currency': currency,
-                    'formatted': f"${balance:,.2f}"
-                })
-            except:
-                pass
-
-    return jsonify({
-        'success': True,
-        'balance': 0.00,
-        'currency': 'USD',
-        'formatted': "$0.00"
-    })
+    """Retorna saldo atual da conta - REDIRECIONA PARA /api/account/balance"""
+    return get_account_balance()
 
 @app.route('/api/bot/stats/<bot_type>')
 def get_bot_stats(bot_type):
-    """
-    ✅ VERSÃO HÍBRIDA - Retorna stats reais OU fallback
-    Mantém compatibilidade com bot real + adiciona fallback para frontend
-    """
+    """Retorna estatísticas de um bot específico - VERSÃO HÍBRIDA"""
     if bot_type not in bots_state:
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
 
     state = bots_state[bot_type]
     bot = state.get('instance')
 
-    # Se bot não está rodando
     if not state.get('running', False):
         return jsonify({
             'success': True,
@@ -352,12 +468,10 @@ def get_bot_stats(bot_type):
 
     stats = {}
 
-    # TENTA PEGAR STATS REAIS PRIMEIRO (mantém bot funcionando!)
     if BOTS_AVAILABLE and bot and hasattr(bot, 'stop_loss'):
         try:
             stats = bot.stop_loss.get_estatisticas()
             
-            # Adiciona balance se disponível
             if hasattr(bot, 'api'):
                 try:
                     stats['saldo_atual'] = bot.api.balance
@@ -365,7 +479,6 @@ def get_bot_stats(bot_type):
                 except:
                     pass
             
-            # Retorna stats reais
             return jsonify({
                 'success': True,
                 'bot_running': True,
@@ -381,8 +494,6 @@ def get_bot_stats(bot_type):
         except Exception as e:
             print(f"⚠️ Erro ao buscar stats reais: {e}")
 
-    # FALLBACK: Se não conseguiu stats reais, retorna estrutura válida
-    # Isso garante que o frontend não quebre
     return jsonify({
         'success': True,
         'bot_running': True,
@@ -398,14 +509,10 @@ def get_bot_stats(bot_type):
 
 @app.route('/api/bot/reset/<bot_type>', methods=['POST'])
 def reset_bot(bot_type):
-    """
-    ✅ NOVA ROTA - Reseta estado do bot
-    Útil quando o bot fica travado
-    """
+    """Reseta estado do bot"""
     if bot_type not in bots_state:
         return jsonify({'error': f'Bot {bot_type} não encontrado'}), 404
     
-    # Para o bot se estiver rodando
     bot = bots_state[bot_type].get('instance')
     if bot and hasattr(bot, 'stop'):
         try:
@@ -459,7 +566,7 @@ if __name__ == '__main__':
     
     print("\n" + "=" * 70)
     print("🚀 ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM)")
-    print("✨ VERSÃO HÍBRIDA: Bot real + fallback para frontend")
+    print("✨ VERSÃO COM SISTEMA DEMO/REAL")
     if BOTS_AVAILABLE:
         print("✅ BOTS PYTHON REAIS INTEGRADOS!")
     else:
@@ -468,7 +575,9 @@ if __name__ == '__main__':
         print("✅ CONFIG CARREGADO!")
     else:
         print("⚠️ CONFIG NÃO CARREGADO!")
-    print(f"🔑 Token configurado: {'SIM' if DERIV_TOKEN else 'NÃO'}")
+    print(f"🔑 Token DEMO: {'✅' if DERIV_TOKEN_DEMO else '❌'}")
+    print(f"🔑 Token REAL: {'✅' if DERIV_TOKEN_REAL else '❌'}")
+    print(f"🎯 Modo atual: {current_account_mode.upper()}")
     print("=" * 70)
     print(f"🌐 Porta: {port}")
     print("=" * 70 + "\n")
