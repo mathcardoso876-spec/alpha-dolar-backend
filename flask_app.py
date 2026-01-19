@@ -1,159 +1,140 @@
 """
-ALPHA DOLAR 2.0 - API Flask (CORRIGIDO - CORS + ROTAS)
-Backend para Alpha Dolar 2.0
+ALPHA DOLAR 2.0 - API Flask
+Backend com suporte REAL / DEMO
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-import sys
 import os
-import random
 import time
-from datetime import datetime
+import random
 
 app = Flask(__name__)
 
-# ✅ CORS CORRIGIDO
 CORS(app, resources={
     r"/api/*": {
         "origins": "*",
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
     }
 })
 
-# Estado dos bots
+# 🔐 TOKENS (Render ENV)
+DEMO_TOKEN = os.environ.get("DEMO_TOKEN", "demo_token_fake")
+REAL_TOKEN = os.environ.get("REAL_TOKEN", "real_token_fake")
+
+# 🤖 Estado dos bots
 bot_states = {
-    'manual': {'running': False, 'stats': {}, 'start_time': None},
-    'ia-simples': {'running': False, 'stats': {}, 'start_time': None},
-    'ia-avancado': {'running': False, 'stats': {}, 'start_time': None},
-    'ia': {'running': False, 'stats': {}, 'start_time': None}
+    'ia': {
+        'running': False,
+        'stats': {},
+        'start_time': None,
+        'account_type': 'demo',
+        'token': None
+    }
 }
 
-@app.route('/api/bot/start', methods=['POST', 'OPTIONS'])
+@app.route('/api/health', methods=['GET'])
+def health():
+    return jsonify({
+        "status": "ok",
+        "environment": "production",
+        "version": "2.1.0",
+        "demo_token_configured": bool(DEMO_TOKEN),
+        "real_token_configured": bool(REAL_TOKEN)
+    })
+
+@app.route('/api/bot/start', methods=['POST'])
 def start_bot():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    data = request.json
+    data = request.json or {}
+
     bot_type = data.get('bot_type')
+    account_type = data.get('account_type', 'demo')
     config = data.get('config', {})
 
     if bot_type not in bot_states:
-        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 400
+        return jsonify({"success": False, "error": "Bot não encontrado"}), 400
 
-    if bot_states[bot_type]['running']:
-        return jsonify({'success': False, 'error': 'Bot já está rodando'}), 400
+    bot = bot_states[bot_type]
 
-    bot_states[bot_type]['running'] = True
-    bot_states[bot_type]['start_time'] = time.time()
-    bot_states[bot_type]['stats'] = {
-        'balance': 10000.00,
-        'saldo_liquido': 0.00,
-        'win_rate': 0.0,
-        'total_trades': 0,
-        'wins': 0,
-        'losses': 0,
-        'trades': []
+    if bot['running']:
+        return jsonify({"success": False, "error": "Bot já está rodando"}), 400
+
+    # 🔐 Seleção de token
+    if account_type == 'real':
+        if not REAL_TOKEN:
+            return jsonify({"success": False, "error": "Token REAL não configurado"}), 400
+        token = REAL_TOKEN
+    else:
+        token = DEMO_TOKEN
+
+    # 📦 Inicializa bot
+    bot['running'] = True
+    bot['start_time'] = time.time()
+    bot['account_type'] = account_type
+    bot['token'] = token
+    bot['stats'] = {
+        "balance": 10000.0 if account_type == 'demo' else 0.92,
+        "saldo_liquido": 0.0,
+        "wins": 0,
+        "losses": 0,
+        "total_trades": 0
     }
 
+    print(f"🚀 Bot iniciado | Conta: {account_type.upper()}")
+
     return jsonify({
-        'success': True,
-        'message': f'Bot {bot_type} iniciado!',
-        'bot_type': bot_type,
-        'mode': 'demo'
+        "success": True,
+        "message": "Bot iniciado",
+        "account_type": account_type
     })
 
-@app.route('/api/bot/stop', methods=['POST', 'OPTIONS'])
+@app.route('/api/bot/stop', methods=['POST'])
 def stop_bot():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    data = request.json
+    data = request.json or {}
     bot_type = data.get('bot_type')
 
     if bot_type not in bot_states:
-        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 400
+        return jsonify({"success": False, "error": "Bot não encontrado"}), 400
 
-    stats = bot_states[bot_type].get('stats', {})
     bot_states[bot_type]['running'] = False
 
     return jsonify({
-        'success': True,
-        'message': f'Bot {bot_type} parado!',
-        'stats': stats
+        "success": True,
+        "message": "Bot parado"
     })
 
-@app.route('/api/bot/stats/<bot_type>', methods=['GET', 'OPTIONS'])
+@app.route('/api/bot/stats/<bot_type>', methods=['GET'])
 def bot_stats(bot_type):
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
     if bot_type not in bot_states:
-        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
-    
+        return jsonify({"success": False}), 404
+
     bot = bot_states[bot_type]
-    
+
     if not bot['running']:
-        return jsonify({
-            'success': True,
-            'bot_running': False,
-            'stats': {
-                'balance': 10000.00,
-                'saldo_liquido': 0.00,
-                'total_trades': 0
-            }
-        })
-    
-    stats = bot.get('stats', {})
-    elapsed = time.time() - bot['start_time']
-    
-    if elapsed > 10 and stats['total_trades'] < 50:
-        is_win = random.random() > 0.35
-        profit = random.uniform(0.5, 2.0) if is_win else random.uniform(-0.35, -1.0)
-        
-        stats['total_trades'] += 1
-        if is_win:
-            stats['wins'] += 1
-        else:
-            stats['losses'] += 1
-        
-        stats['saldo_liquido'] += profit
-        stats['balance'] = 10000 + stats['saldo_liquido']
-        stats['win_rate'] = (stats['wins'] / stats['total_trades']) * 100
-        
-        bot['start_time'] = time.time()
-    
+        return jsonify({"running": False})
+
+    stats = bot['stats']
+
+    # simulação
+    if random.random() > 0.5:
+        profit = random.uniform(0.1, 1.5)
+        stats['wins'] += 1
+    else:
+        profit = -random.uniform(0.1, 1.0)
+        stats['losses'] += 1
+
+    stats['saldo_liquido'] += profit
+    stats['balance'] += profit
+    stats['total_trades'] += 1
+
     return jsonify({
-        'success': True,
-        'bot_running': True,
-        'stats': stats
+        "running": True,
+        "account_type": bot['account_type'],
+        "stats": stats
     })
 
-@app.route('/api/balance', methods=['GET', 'OPTIONS'])
-def get_balance():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    return jsonify({
-        'success': True,
-        'balance': 10000.00,
-        'formatted': '$10,000.00'
-    })
-
-@app.route('/api/health', methods=['GET', 'OPTIONS'])
-def health():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    return jsonify({
-        'status': 'ok',
-        'message': 'Alpha Dolar API Running on Render'
-    })
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print("🚀 Alpha Dolar 2.0 API")
-    print(f"🌐 Porta: {port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    print("🔥 Alpha Dolar Backend rodando")
+    app.run(host="0.0.0.0", port=port)
