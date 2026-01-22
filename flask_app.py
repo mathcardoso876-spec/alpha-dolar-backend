@@ -1,11 +1,10 @@
 """
-ALPHA DOLAR 2.0 - API Flask (CORRIGIDO - CORS + ROTAS)
+ALPHA DOLAR 2.0 - API Flask (TRADES + REGISTROS)
 Backend para Alpha Dolar 2.0
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-import sys
 import os
 import random
 import time
@@ -13,9 +12,7 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# =====================================================
-# ✅ CORS CORRIGIDO
-# =====================================================
+# ✅ CORS LIBERADO
 CORS(app, resources={
     r"/api/*": {
         "origins": "*",
@@ -25,21 +22,10 @@ CORS(app, resources={
     }
 })
 
-# =====================================================
-# 📡 BUFFER DE TRADES (INTEGRAÇÃO FRONTEND)
-# =====================================================
-trade_buffer = []
+# ===============================
+# 🔥 ESTADO GLOBAL
+# ===============================
 
-def registrar_trade_backend(trade):
-    """
-    Recebe um trade do bot e armazena temporariamente
-    para o frontend consumir via API.
-    """
-    trade_buffer.append(trade)
-
-# =====================================================
-# Estado dos bots
-# =====================================================
 bot_states = {
     'manual': {'running': False, 'stats': {}, 'start_time': None},
     'ia-simples': {'running': False, 'stats': {}, 'start_time': None},
@@ -47,9 +33,40 @@ bot_states = {
     'ia': {'running': False, 'stats': {}, 'start_time': None}
 }
 
-# =====================================================
-# 🚀 ROTAS DO BOT
-# =====================================================
+# 🧾 Histórico global de trades (últimos 200)
+trade_history = []
+
+
+# ===============================
+# 🧠 FUNÇÃO AUXILIAR
+# ===============================
+
+def register_trade(bot_type, profit):
+    global trade_history
+
+    is_win = profit >= 0
+
+    trade = {
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "type": "WIN" if is_win else "LOSS",
+        "market": "Volatility 100 Index",
+        "value": round(abs(profit), 2),
+        "duration": "1 tick",
+        "result": "Ganho" if is_win else "Perda",
+        "profit": round(profit, 2),
+        "bot": bot_type
+    }
+
+    trade_history.insert(0, trade)
+
+    # Limita histórico
+    if len(trade_history) > 200:
+        trade_history.pop()
+
+
+# ===============================
+# 🚀 ROTAS
+# ===============================
 
 @app.route('/api/bot/start', methods=['POST', 'OPTIONS'])
 def start_bot():
@@ -58,7 +75,6 @@ def start_bot():
     
     data = request.json
     bot_type = data.get('bot_type')
-    config = data.get('config', {})
 
     if bot_type not in bot_states:
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 400
@@ -74,8 +90,7 @@ def start_bot():
         'win_rate': 0.0,
         'total_trades': 0,
         'wins': 0,
-        'losses': 0,
-        'trades': []
+        'losses': 0
     }
 
     return jsonify({
@@ -84,6 +99,7 @@ def start_bot():
         'bot_type': bot_type,
         'mode': 'demo'
     })
+
 
 @app.route('/api/bot/stop', methods=['POST', 'OPTIONS'])
 def stop_bot():
@@ -105,6 +121,7 @@ def stop_bot():
         'stats': stats
     })
 
+
 @app.route('/api/bot/stats/<bot_type>', methods=['GET', 'OPTIONS'])
 def bot_stats(bot_type):
     if request.method == 'OPTIONS':
@@ -119,21 +136,17 @@ def bot_stats(bot_type):
         return jsonify({
             'success': True,
             'bot_running': False,
-            'stats': {
-                'balance': 10000.00,
-                'saldo_liquido': 0.00,
-                'total_trades': 0
-            }
+            'stats': bot.get('stats', {})
         })
     
     stats = bot.get('stats', {})
     elapsed = time.time() - bot['start_time']
-    
-    # Simulação simples apenas para stats visuais
-    if elapsed > 10 and stats['total_trades'] < 50:
+
+    # ⏱️ Simula trade a cada ~8s
+    if elapsed > 8:
         is_win = random.random() > 0.35
-        profit = random.uniform(0.5, 2.0) if is_win else random.uniform(-0.35, -1.0)
-        
+        profit = random.uniform(0.5, 2.0) if is_win else random.uniform(-0.35, -1.2)
+
         stats['total_trades'] += 1
         if is_win:
             stats['wins'] += 1
@@ -143,19 +156,47 @@ def bot_stats(bot_type):
         stats['saldo_liquido'] += profit
         stats['balance'] = 10000 + stats['saldo_liquido']
         stats['win_rate'] = (stats['wins'] / stats['total_trades']) * 100
-        
+
+        # ✅ REGISTRA NO HISTÓRICO GLOBAL
+        register_trade(bot_type, profit)
+
         bot['start_time'] = time.time()
-    
+
     return jsonify({
         'success': True,
         'bot_running': True,
         'stats': stats
     })
 
-# =====================================================
-# 📥 NOVA ROTA — ENTREGA TRADES AO FRONTEND
-# =====================================================
-@app.route('/api/bot/trades', methods=['GET', 'OPTIONS'])
+
+# ===============================
+# 🧾 NOVA ROTA — HISTÓRICO DE TRADES
+# ===============================
+
+@app.route('/api/bot/trades', methods=['GET'])
 def get_trades():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 2
+    return jsonify(trade_history)
+
+
+# ===============================
+# 🩺 HEALTH CHECK
+# ===============================
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    return jsonify({
+        'status': 'ok',
+        'message': 'Alpha Dolar API Running on Render',
+        'version': '2.1.0'
+    })
+
+
+# ===============================
+# ▶️ START
+# ===============================
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    print("🚀 Alpha Dolar 2.0 API")
+    print(f"🌐 Porta: {port}")
+    app.run(debug=False, host='0.0.0.0', port=port)
