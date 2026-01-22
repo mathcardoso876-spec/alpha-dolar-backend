@@ -13,7 +13,9 @@ from datetime import datetime
 
 app = Flask(__name__)
 
+# =====================================================
 # ✅ CORS CORRIGIDO
+# =====================================================
 CORS(app, resources={
     r"/api/*": {
         "origins": "*",
@@ -23,13 +25,31 @@ CORS(app, resources={
     }
 })
 
+# =====================================================
+# 📡 BUFFER DE TRADES (INTEGRAÇÃO FRONTEND)
+# =====================================================
+trade_buffer = []
+
+def registrar_trade_backend(trade):
+    """
+    Recebe um trade do bot e armazena temporariamente
+    para o frontend consumir via API.
+    """
+    trade_buffer.append(trade)
+
+# =====================================================
 # Estado dos bots
+# =====================================================
 bot_states = {
     'manual': {'running': False, 'stats': {}, 'start_time': None},
     'ia-simples': {'running': False, 'stats': {}, 'start_time': None},
     'ia-avancado': {'running': False, 'stats': {}, 'start_time': None},
     'ia': {'running': False, 'stats': {}, 'start_time': None}
 }
+
+# =====================================================
+# 🚀 ROTAS DO BOT
+# =====================================================
 
 @app.route('/api/bot/start', methods=['POST', 'OPTIONS'])
 def start_bot():
@@ -109,6 +129,7 @@ def bot_stats(bot_type):
     stats = bot.get('stats', {})
     elapsed = time.time() - bot['start_time']
     
+    # Simulação simples apenas para stats visuais
     if elapsed > 10 and stats['total_trades'] < 50:
         is_win = random.random() > 0.35
         profit = random.uniform(0.5, 2.0) if is_win else random.uniform(-0.35, -1.0)
@@ -131,29 +152,10 @@ def bot_stats(bot_type):
         'stats': stats
     })
 
-@app.route('/api/balance', methods=['GET', 'OPTIONS'])
-def get_balance():
+# =====================================================
+# 📥 NOVA ROTA — ENTREGA TRADES AO FRONTEND
+# =====================================================
+@app.route('/api/bot/trades', methods=['GET', 'OPTIONS'])
+def get_trades():
     if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    return jsonify({
-        'success': True,
-        'balance': 10000.00,
-        'formatted': '$10,000.00'
-    })
-
-@app.route('/api/health', methods=['GET', 'OPTIONS'])
-def health():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    return jsonify({
-        'status': 'ok',
-        'message': 'Alpha Dolar API Running on Render'
-    })
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print("🚀 Alpha Dolar 2.0 API")
-    print(f"🌐 Porta: {port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+        return jsonify({'status': 'ok'}), 2
