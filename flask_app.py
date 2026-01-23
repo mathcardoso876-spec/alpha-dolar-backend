@@ -1,5 +1,5 @@
 """
-ALPHA DOLAR 2.0 - API Flask (TRADES + REGISTROS)
+ALPHA DOLAR 2.0 - API Flask (REGISTROS + INTEGRAÇÃO FRONTEND)
 Backend para Alpha Dolar 2.0
 """
 
@@ -9,6 +9,7 @@ import os
 import random
 import time
 from datetime import datetime
+from collections import deque
 
 app = Flask(__name__)
 
@@ -23,49 +24,28 @@ CORS(app, resources={
 })
 
 # ===============================
-# 🔥 ESTADO GLOBAL
+# 🔥 ESTADO GLOBAL DOS BOTS
 # ===============================
 
-bot_states = {
-    'manual': {'running': False, 'stats': {}, 'start_time': None},
-    'ia-simples': {'running': False, 'stats': {}, 'start_time': None},
-    'ia-avancado': {'running': False, 'stats': {}, 'start_time': None},
-    'ia': {'running': False, 'stats': {}, 'start_time': None}
-}
+MAX_TRADES_HISTORY = 100
 
-# 🧾 Histórico global de trades (últimos 200)
-trade_history = []
-
-
-# ===============================
-# 🧠 FUNÇÃO AUXILIAR
-# ===============================
-
-def register_trade(bot_type, profit):
-    global trade_history
-
-    is_win = profit >= 0
-
-    trade = {
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "type": "WIN" if is_win else "LOSS",
-        "market": "Volatility 100 Index",
-        "value": round(abs(profit), 2),
-        "duration": "1 tick",
-        "result": "Ganho" if is_win else "Perda",
-        "profit": round(profit, 2),
-        "bot": bot_type
+def create_bot_state():
+    return {
+        'running': False,
+        'stats': {},
+        'start_time': None,
+        'trades': deque(maxlen=MAX_TRADES_HISTORY)
     }
 
-    trade_history.insert(0, trade)
-
-    # Limita histórico
-    if len(trade_history) > 200:
-        trade_history.pop()
-
+bot_states = {
+    'manual': create_bot_state(),
+    'ia-simples': create_bot_state(),
+    'ia-avancado': create_bot_state(),
+    'ia': create_bot_state()
+}
 
 # ===============================
-# 🚀 ROTAS
+# 🚀 START BOT
 # ===============================
 
 @app.route('/api/bot/start', methods=['POST', 'OPTIONS'])
@@ -73,7 +53,7 @@ def start_bot():
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
     
-    data = request.json
+    data = request.json or {}
     bot_type = data.get('bot_type')
 
     if bot_type not in bot_states:
@@ -84,6 +64,8 @@ def start_bot():
 
     bot_states[bot_type]['running'] = True
     bot_states[bot_type]['start_time'] = time.time()
+    bot_states[bot_type]['trades'].clear()
+
     bot_states[bot_type]['stats'] = {
         'balance': 10000.00,
         'saldo_liquido': 0.00,
@@ -100,27 +82,31 @@ def start_bot():
         'mode': 'demo'
     })
 
+# ===============================
+# 🛑 STOP BOT
+# ===============================
 
 @app.route('/api/bot/stop', methods=['POST', 'OPTIONS'])
 def stop_bot():
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
     
-    data = request.json
+    data = request.json or {}
     bot_type = data.get('bot_type')
 
     if bot_type not in bot_states:
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 400
 
-    stats = bot_states[bot_type].get('stats', {})
     bot_states[bot_type]['running'] = False
 
     return jsonify({
         'success': True,
-        'message': f'Bot {bot_type} parado!',
-        'stats': stats
+        'message': f'Bot {bot_type} parado!'
     })
 
+# ===============================
+# 📊 BOT STATS + SIMULA TRADES
+# ===============================
 
 @app.route('/api/bot/stats/<bot_type>', methods=['GET', 'OPTIONS'])
 def bot_stats(bot_type):
@@ -131,35 +117,20 @@ def bot_stats(bot_type):
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
     
     bot = bot_states[bot_type]
-    
+
     if not bot['running']:
         return jsonify({
             'success': True,
             'bot_running': False,
             'stats': bot.get('stats', {})
         })
-    
-    stats = bot.get('stats', {})
+
+    stats = bot['stats']
     elapsed = time.time() - bot['start_time']
 
-    # ⏱️ Simula trade a cada ~8s
-    if elapsed > 8:
-        is_win = random.random() > 0.35
-        profit = random.uniform(0.5, 2.0) if is_win else random.uniform(-0.35, -1.2)
-
-        stats['total_trades'] += 1
-        if is_win:
-            stats['wins'] += 1
-        else:
-            stats['losses'] += 1
-        
-        stats['saldo_liquido'] += profit
-        stats['balance'] = 10000 + stats['saldo_liquido']
-        stats['win_rate'] = (stats['wins'] / stats['total_trades']) * 100
-
-        # ✅ REGISTRA NO HISTÓRICO GLOBAL
-        register_trade(bot_type, profit)
-
+    # ⏱️ Simula um trade a cada 6 segundos
+    if elapsed > 6:
+        gerar_trade(bot)
         bot['start_time'] = time.time()
 
     return jsonify({
@@ -168,31 +139,68 @@ def bot_stats(bot_type):
         'stats': stats
     })
 
+# ===============================
+# 🧾 REGISTROS DE TRADES
+# ===============================
+
+@app.route('/api/bot/trades/<bot_type>', methods=['GET'])
+def get_trades(bot_type):
+    if bot_type not in bot_states:
+        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
+
+    trades = list(bot_states[bot_type]['trades'])
+    return jsonify({
+        'success': True,
+        'total': len(trades),
+        'trades': trades
+    })
 
 # ===============================
-# 🧾 NOVA ROTA — HISTÓRICO DE TRADES
-# ===============================
-
-@app.route('/api/bot/trades', methods=['GET'])
-def get_trades():
-    return jsonify(trade_history)
-
-
-# ===============================
-# 🩺 HEALTH CHECK
+# ❤️ HEALTH CHECK
 # ===============================
 
 @app.route('/api/health', methods=['GET'])
 def health():
     return jsonify({
         'status': 'ok',
-        'message': 'Alpha Dolar API Running on Render',
-        'version': '2.1.0'
+        'message': 'Alpha Dolar API Running on Render'
     })
 
+# ===============================
+# ⚙️ FUNÇÃO DE SIMULAÇÃO
+# ===============================
+
+def gerar_trade(bot):
+    stats = bot['stats']
+
+    is_win = random.random() > 0.4
+    profit = round(random.uniform(1.0, 3.0), 2) if is_win else round(random.uniform(-1.0, -2.5), 2)
+
+    stats['total_trades'] += 1
+
+    if is_win:
+        stats['wins'] += 1
+        resultado = "WIN"
+    else:
+        stats['losses'] += 1
+        resultado = "LOSS"
+
+    stats['saldo_liquido'] += profit
+    stats['balance'] = round(10000 + stats['saldo_liquido'], 2)
+    stats['win_rate'] = round((stats['wins'] / stats['total_trades']) * 100, 2)
+
+    trade = {
+        'id': stats['total_trades'],
+        'resultado': resultado,
+        'profit': profit,
+        'balance': stats['balance'],
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    bot['trades'].appendleft(trade)
 
 # ===============================
-# ▶️ START
+# 🚀 START SERVER
 # ===============================
 
 if __name__ == '__main__':
