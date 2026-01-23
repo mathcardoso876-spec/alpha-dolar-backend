@@ -11,21 +11,44 @@ import time
 from datetime import datetime
 from collections import deque
 
+# ===============================
+# 🚀 APP
+# ===============================
+
 app = Flask(__name__)
+
+# ===============================
+# 🌍 CORS LIBERADO (GLOBAL)
+# ===============================
+
+CORS(app)
+
+# ===============================
+# ❤️ ROTA RAIZ (EVITA ERRO 404 NO RENDER)
+# ===============================
+
+@app.route('/')
+def home():
+    return jsonify({
+        "status": "online",
+        "message": "Alpha Dolar Backend Rodando 🚀",
+        "routes": [
+            "/api/health",
+            "/api/bot/start",
+            "/api/bot/stop",
+            "/api/bot/stats/<bot_type>",
+            "/api/bot/trades/<bot_type>",
+            "/teste123"
+        ]
+    })
+
+# ===============================
+# 🧪 ROTA TESTE
+# ===============================
+
 @app.route('/teste123')
 def teste123():
-    return "ROTA TESTE OK", 200
-
-
-# ✅ CORS LIBERADO
-CORS(app, resources={
-    r"/api/*": {
-        "origins": "*",
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"],
-        "supports_credentials": True
-    }
-})
+    return "ROTA TESTE OK ✅", 200
 
 # ===============================
 # 🔥 ESTADO GLOBAL DOS BOTS
