@@ -12,6 +12,10 @@ from datetime import datetime
 from collections import deque
 
 app = Flask(__name__)
+@app.route('/teste123')
+def teste123():
+    return "ROTA TESTE OK", 200
+
 
 # ✅ CORS LIBERADO
 CORS(app, resources={
