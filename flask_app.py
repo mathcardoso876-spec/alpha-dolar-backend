@@ -235,3 +235,17 @@ if __name__ == '__main__':
     print("🚀 Alpha Dolar 2.0 API")
     print(f"🌐 Porta: {port}")
     app.run(debug=False, host='0.0.0.0', port=port)
+    @app.route('/api/account/balance')
+def get_balance():
+    acc_type = request.args.get('type', 'demo')
+
+    if acc_type == 'real':
+        balance = 100.00
+    else:
+        balance = 50.00
+
+    return jsonify({
+        "balance": balance,
+        "type": acc_type
+    })
+
