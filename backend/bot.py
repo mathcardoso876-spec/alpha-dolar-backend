@@ -1,237 +1,422 @@
 """
-ALPHA DOLAR 2.0 - API Flask (REGISTROS + INTEGRAÇÃO FRONTEND)
-Backend para Alpha Dolar 2.0
+ALPHA DOLAR 2.0 - Bot de Trading Automatizado
+Motor Principal do Bot
+ATUALIZADO: Integração com Alpha Bots 2, 4 e 5
 """
-
-from flask import Flask, jsonify, request
-from flask_cors import CORS
-import os
-import random
 import time
+import sys
 from datetime import datetime
-from collections import deque
 
-# ===============================
-# 🚀 APP
-# ===============================
+# Imports relativos corretos
+try:
+    from .config import BotConfig, validate_config
+    from .deriv_api import DerivAPI
+    from .risk_management.martingale import Martingale
+    from .risk_management.stop_loss import StopLoss
+except ImportError:
+    # Fallback para imports absolutos quando executado diretamente
+    from config import BotConfig, validate_config
+    from deriv_api import DerivAPI
+    from risk_management.martingale import Martingale
+    from risk_management.stop_loss import StopLoss
 
-app = Flask(__name__)
+# ✅ IMPORTAÇÃO DAS NOVAS ESTRATÉGIAS
+try:
+    try:
+        from .strategies.alpha_bot_2_macd import AlphaBot2MACD
+        from .strategies.alpha_bot_4_digit import AlphaBot4DigitPattern
+        from .strategies.alpha_bot_5_ema import AlphaBot5EMA
+    except ImportError:
+        from strategies.alpha_bot_2_macd import AlphaBot2MACD
+        from strategies.alpha_bot_4_digit import AlphaBot4DigitPattern
+        from strategies.alpha_bot_5_ema import AlphaBot5EMA
+    STRATEGIES_AVAILABLE = True
+except ImportError:
+    STRATEGIES_AVAILABLE = False
+    print("⚠️ Estratégias Alpha Bot 2, 4, 5 não encontradas!")
 
-# ===============================
-# 🌍 CORS LIBERADO (GLOBAL)
-# ===============================
 
-CORS(app)
+class AlphaDolar:
+    """Motor principal do bot Alpha Dolar 2.0"""
 
-# ===============================
-# ❤️ ROTA RAIZ (EVITA ERRO 404 NO RENDER)
-# ===============================
+    def __init__(self, strategy=None, use_martingale=True, bot_number=None):
+        self.bot_name = "ALPHA DOLAR 2.0"
+        self.version = "2.0.0"
 
-@app.route('/')
-def home():
-    return jsonify({
-        "status": "online",
-        "message": "Alpha Dolar Backend Rodando 🚀",
-        "routes": [
-            "/api/health",
-            "/api/bot/start",
-            "/api/bot/stop",
-            "/api/bot/stats/<bot_type>",
-            "/api/bot/trades/<bot_type>",
-            "/teste123"
-        ]
-    })
+        # API
+        self.api = DerivAPI()
 
-# ===============================
-# 🧪 ROTA TESTE
-# ===============================
+        # ✅ SISTEMA DE ESTRATÉGIAS INTELIGENTE
+        self.bot_number = bot_number
+        self.strategy_manager = StrategyManager()
 
-@app.route('/teste123')
-def teste123():
-    return "ROTA TESTE OK ✅", 200
+        # Define estratégia
+        if bot_number and STRATEGIES_AVAILABLE:
+            # Usa estratégia automática baseada no número do bot
+            self.strategy = self.strategy_manager.get_strategy(bot_number)
+            if self.strategy is None and strategy is None:
+                raise ValueError(f"Alpha Bot {bot_number} não encontrado e nenhuma estratégia alternativa fornecida!")
+        elif strategy is None:
+            raise ValueError("Estratégia não pode ser None!")
+        else:
+            self.strategy = strategy
 
-# ===============================
-# 🔥 ESTADO GLOBAL DOS BOTS
-# ===============================
+        # Gestão de Risco
+        self.martingale = Martingale() if use_martingale else None
+        self.stop_loss = StopLoss()
 
-MAX_TRADES_HISTORY = 100
+        # Estado
+        self.is_running = False
+        self.current_stake = BotConfig.STAKE_INICIAL
+        self.waiting_contract = False
+        self.current_contract_id = None
 
-def create_bot_state():
-    return {
-        'running': False,
-        'stats': {},
-        'start_time': None,
-        'trades': deque(maxlen=MAX_TRADES_HISTORY)
-    }
+        # ✅ HISTÓRICO DE TICKS (para estratégias técnicas)
+        self.tick_history = []
+        self.max_tick_history = 200  # Guarda últimos 200 ticks
 
-bot_states = {
-    'manual': create_bot_state(),
-    'ia-simples': create_bot_state(),
-    'ia-avancado': create_bot_state(),
-    'ia': create_bot_state()
-}
+        # Estatísticas
+        self.trades_hoje = 0
+        self.inicio_sessao = datetime.now()
 
-# ===============================
-# 🚀 START BOT
-# ===============================
+    def print_header(self):
+        """Exibe cabeçalho do bot"""
+        print("\n" + "="*70)
+        print(f"🤖 {self.bot_name} v{self.version}")
+        print("="*70)
 
-@app.route('/api/bot/start', methods=['POST', 'OPTIONS'])
-def start_bot():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    data = request.json or {}
-    bot_type = data.get('bot_type')
+        # ✅ EXIBE INFO DA ESTRATÉGIA
+        strategy_name = getattr(self.strategy, 'name', 'Estratégia Personalizada')
+        print(f"📊 Estratégia: {strategy_name}")
 
-    if bot_type not in bot_states:
-        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 400
+        # Se for uma das novas estratégias, mostra detalhes
+        if hasattr(self.strategy, 'get_info'):
+            info = self.strategy.get_info()
+            print(f"   Tipo: {info.get('tier', 'N/A')}")
+            print(f"   Contratos: {info.get('contract_type', 'N/A')}")
+            print(f"   Indicadores: {info.get('indicators', 'N/A')}")
 
-    if bot_states[bot_type]['running']:
-        return jsonify({'success': False, 'error': 'Bot já está rodando'}), 400
+        print(f"💰 Stake Inicial: ${BotConfig.STAKE_INICIAL}")
+        print(f"🎯 Lucro Alvo: ${BotConfig.LUCRO_ALVO}")
+        print(f"🛑 Limite Perda: ${BotConfig.LIMITE_PERDA}")
+        print(f"⚡ Martingale: {'Ativado' if self.martingale else 'Desativado'}")
+        print("="*70 + "\n")
 
-    bot_states[bot_type]['running'] = True
-    bot_states[bot_type]['start_time'] = time.time()
-    bot_states[bot_type]['trades'].clear()
+    def log(self, message, level="INFO"):
+        """Log formatado"""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        emoji = {
+            "INFO": "ℹ️",
+            "SUCCESS": "✅",
+            "ERROR": "❌",
+            "WARNING": "⚠️",
+            "TRADE": "💰",
+            "WIN": "🎉",
+            "LOSS": "😞"
+        }.get(level, "📝")
+        print(f"[{timestamp}] {emoji} {message}")
 
-    bot_states[bot_type]['stats'] = {
-        'balance': 10000.00,
-        'saldo_liquido': 0.00,
-        'win_rate': 0.0,
-        'total_trades': 0,
-        'wins': 0,
-        'losses': 0
-    }
+    def on_tick(self, tick_data):
+        """
+        Callback chamado quando recebe novo tick
+        ✅ ATUALIZADO: Suporta estratégias antigas e novas
+        """
+        # Se está aguardando resultado de contrato, não faz nada
+        if self.waiting_contract:
+            return
 
-    return jsonify({
-        'success': True,
-        'message': f'Bot {bot_type} iniciado!',
-        'bot_type': bot_type,
-        'mode': 'demo'
-    })
+        # ✅ ADICIONA TICK AO HISTÓRICO
+        if 'quote' in tick_data:
+            price = float(tick_data['quote'])
+            self.tick_history.append(price)
 
-# ===============================
-# 🛑 STOP BOT
-# ===============================
+            # Mantém apenas últimos N ticks
+            if len(self.tick_history) > self.max_tick_history:
+                self.tick_history.pop(0)
 
-@app.route('/api/bot/stop', methods=['POST', 'OPTIONS'])
-def stop_bot():
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    data = request.json or {}
-    bot_type = data.get('bot_type')
+        # Verifica se pode operar
+        pode_operar, motivo = self.stop_loss.pode_operar(self.api.balance)
+        if not pode_operar:
+            self.log(motivo, "WARNING")
+            self.stop()
+            return
 
-    if bot_type not in bot_states:
-        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 400
+        # Verifica limite de trades diários
+        if self.trades_hoje >= BotConfig.MAX_TRADES_PER_DAY:
+            self.log(f"Limite diário de {BotConfig.MAX_TRADES_PER_DAY} trades atingido!", "WARNING")
+            self.stop()
+            return
 
-    bot_states[bot_type]['running'] = False
+        # ✅ DETECTA TIPO DE ESTRATÉGIA E ANALISA
+        signal_data = self.analyze_strategy(tick_data)
 
-    return jsonify({
-        'success': True,
-        'message': f'Bot {bot_type} parado!'
-    })
+        if signal_data and signal_data.get('signal'):
+            direction = signal_data['signal']
+            confidence = signal_data.get('confidence', 0)
 
-# ===============================
-# 📊 BOT STATS + SIMULA TRADES
-# ===============================
+            self.log(f"📊 Sinal detectado: {direction} | Confiança: {confidence:.1f}%", "TRADE")
 
-@app.route('/api/bot/stats/<bot_type>', methods=['GET', 'OPTIONS'])
-def bot_stats(bot_type):
-    if request.method == 'OPTIONS':
-        return jsonify({'status': 'ok'}), 200
-    
-    if bot_type not in bot_states:
-        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
-    
-    bot = bot_states[bot_type]
+            # ✅ PASSA OS PARÂMETROS COMPLETOS
+            self.executar_trade(direction, signal_data)
 
-    if not bot['running']:
-        return jsonify({
-            'success': True,
-            'bot_running': False,
-            'stats': bot.get('stats', {})
-        })
+    def analyze_strategy(self, tick_data):
+        """
+        ✅ NOVO: Analisa a estratégia (antiga ou nova)
+        Retorna os dados do sinal de forma unificada
+        """
+        # ✅ ESTRATÉGIAS NOVAS (Alpha Bot 2, 4, 5)
+        if hasattr(self.strategy, 'analyze'):
+            # Precisa de histórico de ticks
+            if len(self.tick_history) < 30:
+                return None
 
-    stats = bot['stats']
-    elapsed = time.time() - bot['start_time']
+            result = self.strategy.analyze(self.tick_history)
+            return result
 
-    # ⏱️ Simula um trade a cada 6 segundos
-    if elapsed > 6:
-        gerar_trade(bot)
-        bot['start_time'] = time.time()
+        # ✅ ESTRATÉGIAS ANTIGAS (compatibilidade)
+        elif hasattr(self.strategy, 'should_enter'):
+            should_enter, direction, confidence = self.strategy.should_enter(tick_data)
 
-    return jsonify({
-        'success': True,
-        'bot_running': True,
-        'stats': stats
-    })
+            if should_enter and direction:
+                return {
+                    'signal': direction,
+                    'confidence': confidence * 100,  # Converte para porcentagem
+                    'contract_type': direction,
+                    'parameters': None  # Estratégias antigas não têm parâmetros específicos
+                }
 
-# ===============================
-# 🧾 REGISTROS DE TRADES
-# ===============================
+        return None
 
-@app.route('/api/bot/trades/<bot_type>', methods=['GET'])
-def get_trades(bot_type):
-    if bot_type not in bot_states:
-        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
+    def executar_trade(self, direction, signal_data=None):
+        """
+        Executa um trade
+        ✅ ATUALIZADO: Suporta parâmetros das novas estratégias
+        """
+        # Calcula stake atual
+        if self.martingale:
+            stake = self.martingale.stake_atual
+        else:
+            stake = self.current_stake
 
-    trades = list(bot_states[bot_type]['trades'])
-    return jsonify({
-        'success': True,
-        'total': len(trades),
-        'trades': trades
-    })
+        # Verifica se tem saldo suficiente
+        if self.api.balance < stake:
+            self.log(f"Saldo insuficiente! Necessário: ${stake:.2f} | Disponível: ${self.api.balance:.2f}", "ERROR")
+            return
 
-# ===============================
-# ❤️ HEALTH CHECK
-# ===============================
+        # ✅ OBTÉM PARÂMETROS DO CONTRATO
+        if signal_data and signal_data.get('parameters'):
+            # Nova estratégia com parâmetros completos
+            params = signal_data['parameters'].copy()
+            params['amount'] = stake  # Sobrescreve o stake
+            contract_type = signal_data.get('contract_type', direction)
+            barrier = params.get('barrier')
+        else:
+            # Estratégia antiga - usa método tradicional
+            params = self.strategy.get_contract_params(direction)
+            contract_type = params.get("contract_type", direction)
+            barrier = None
 
-@app.route('/api/health', methods=['GET'])
-def health():
-    return jsonify({
-        'status': 'ok',
-        'message': 'Alpha Dolar API Running on Render'
-    })
+        # Log detalhado
+        log_msg = f"🎯 Executando {contract_type} | Stake: ${stake:.2f}"
+        if barrier is not None:
+            log_msg += f" | Barreira: {barrier}"
+        self.log(log_msg, "TRADE")
 
-# ===============================
-# ⚙️ FUNÇÃO DE SIMULAÇÃO
-# ===============================
+        # ✅ SOLICITA PROPOSTA (com ou sem barreira)
+        proposal_params = {
+            'contract_type': contract_type,
+            'symbol': params.get("symbol", BotConfig.DEFAULT_SYMBOL),
+            'amount': stake,
+            'duration': params.get("duration", 1),
+            'duration_unit': params.get("duration_unit", "t")
+        }
 
-def gerar_trade(bot):
-    stats = bot['stats']
+        # Adiciona barreira se necessário
+        if barrier is not None:
+            proposal_params['barrier'] = barrier
 
-    is_win = random.random() > 0.4
-    profit = round(random.uniform(1.0, 3.0), 2) if is_win else round(random.uniform(-1.0, -2.5), 2)
+        self.api.get_proposal(**proposal_params)
 
-    stats['total_trades'] += 1
+        # Marca como aguardando
+        self.waiting_contract = True
+        self.trades_hoje += 1
 
-    if is_win:
-        stats['wins'] += 1
-        resultado = "WIN"
-    else:
-        stats['losses'] += 1
-        resultado = "LOSS"
+        # Registra no martingale
+        if self.martingale:
+            self.martingale.registrar_trade(stake)
 
-    stats['saldo_liquido'] += profit
-    stats['balance'] = round(10000 + stats['saldo_liquido'], 2)
-    stats['win_rate'] = round((stats['wins'] / stats['total_trades']) * 100, 2)
+    def on_contract_update(self, contract_data):
+        """
+        Callback chamado quando recebe atualização de contrato
+        """
+        status = contract_data.get("status")
 
-    trade = {
-        'id': stats['total_trades'],
-        'resultado': resultado,
-        'profit': profit,
-        'balance': stats['balance'],
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
+        # Aguarda finalização
+        if status not in ["won", "lost"]:
+            return
 
-    bot['trades'].appendleft(trade)
+        # Contrato finalizado
+        profit = float(contract_data.get("profit", 0))
+        contract_id = contract_data.get("contract_id")
 
-# ===============================
-# 🚀 START SERVER
-# ===============================
+        vitoria = status == "won"
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    print("🚀 Alpha Dolar 2.0 API")
-    print(f"🌐 Porta: {port}")
-    app.run(debug=False, host='0.0.0.0', port=port)
+        # Log do resultado
+        if vitoria:
+            self.log(f"🎉 VITÓRIA! Lucro: ${profit:.2f} | ID: {contract_id}", "WIN")
+        else:
+            self.log(f"😞 DERROTA! Perda: ${profit:.2f} | ID: {contract_id}", "LOSS")
+
+        # Atualiza martingale
+        if self.martingale:
+            self.martingale.calcular_proximo_stake(vitoria)
+            info = self.martingale.get_info()
+            self.log(f"📊 Próximo stake: ${info['stake_atual']:.2f} | Step: {info['step_atual']}/{info['max_steps']}", "INFO")
+
+        # Registra no stop loss
+        self.stop_loss.registrar_trade(profit, vitoria)
+
+        # Exibe estatísticas
+        stats = self.stop_loss.get_estatisticas()
+        self.log(f"📈 Líquido: ${stats['saldo_liquido']:+.2f} | Win Rate: {stats['win_rate']:.1f}% | Trades: {stats['total_trades']}", "INFO")
+
+        # Libera para próximo trade
+        self.waiting_contract = False
+        self.current_contract_id = None
+
+        # Verifica se deve parar
+        deve_parar, motivo = self.stop_loss.deve_parar()
+        if deve_parar:
+            self.log(motivo, "WARNING")
+            self.stop()
+
+    def on_balance_update(self, balance):
+        """Callback quando saldo atualiza"""
+        self.log(f"💰 Saldo atualizado: ${balance:.2f}", "INFO")
+
+    def start(self):
+        """Inicia o bot"""
+        try:
+            # Valida configuração
+            if not validate_config():
+                return False
+
+            # Exibe cabeçalho
+            self.print_header()
+
+            # Conecta à API
+            self.log("Conectando à Deriv API...", "INFO")
+            if not self.api.connect():
+                self.log("Falha na conexão!", "ERROR")
+                return False
+
+            # Autoriza
+            self.log("Autorizando...", "INFO")
+            if not self.api.authorize():
+                self.log("Falha na autorização!", "ERROR")
+                return False
+
+            self.log(f"✅ Conectado! Saldo: ${self.api.balance:.2f} {self.api.currency}", "SUCCESS")
+
+            # Verifica saldo mínimo
+            if self.api.balance < BotConfig.MIN_BALANCE:
+                self.log(f"Saldo insuficiente! Mínimo: ${BotConfig.MIN_BALANCE:.2f}", "ERROR")
+                return False
+
+            # Configura callbacks
+            self.api.set_tick_callback(self.on_tick)
+            self.api.set_contract_callback(self.on_contract_update)
+            self.api.set_balance_callback(self.on_balance_update)
+
+            # Inscreve em ticks
+            self.api.subscribe_ticks(BotConfig.DEFAULT_SYMBOL)
+
+            # Marca como rodando
+            self.is_running = True
+
+            self.log("🚀 Bot iniciado! Aguardando sinais...", "SUCCESS")
+
+            # Loop principal
+            while self.is_running:
+                time.sleep(1)
+
+            return True
+
+        except KeyboardInterrupt:
+            self.log("\n⏹️ Bot interrompido pelo usuário", "WARNING")
+            self.stop()
+            return True
+        except Exception as e:
+            self.log(f"Erro fatal: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def stop(self):
+        """Para o bot"""
+        self.is_running = False
+
+        # Exibe relatório final
+        self.exibir_relatorio_final()
+
+        # Desconecta
+        if self.api:
+            self.api.disconnect()
+
+        self.log("Bot encerrado", "INFO")
+
+    def exibir_relatorio_final(self):
+        """Exibe relatório final da sessão"""
+        print("\n" + "="*70)
+        print("📊 RELATÓRIO FINAL DA SESSÃO")
+        print("="*70)
+
+        stats = self.stop_loss.get_estatisticas()
+
+        print(f"\n💰 Resultados Financeiros:")
+        print(f"   Saldo Líquido: ${stats['saldo_liquido']:+.2f}")
+        print(f"   Lucro Total: ${stats['lucro_total']:.2f}")
+        print(f"   Perda Total: ${stats['perda_total']:.2f}")
+
+        print(f"\n📈 Estatísticas:")
+        print(f"   Total de Trades: {stats['total_trades']}")
+        print(f"   Vitórias: {stats['vitorias']}")
+        print(f"   Derrotas: {stats['derrotas']}")
+        print(f"   Win Rate: {stats['win_rate']:.2f}%")
+        print(f"\n🎯 Sequências:")
+        print(f"   Vitórias Consecutivas (atual): {stats['vitorias_consecutivas']}")
+        print(f"   Perdas Consecutivas (atual): {stats['perdas_consecutivas']}")
+        print(f"   Máx. Vitórias Consecutivas: {stats['max_vitorias_consecutivas']}")
+        print(f"   Máx. Perdas Consecutivas: {stats['max_perdas_consecutivas']}")
+        print(f"\n⏱️ Tempo de Sessão: {stats['tempo_sessao']}")
+        if self.martingale:
+            print(f"\n🎰 Martingale:")
+            info = self.martingale.get_info()
+            print(f"   Total Investido: ${info['total_investido']:.2f}")
+            print(f"   Ciclos Completos: {info['ciclos_completos']}")
+        print("\n" + "="*70 + "\n")
+# ✅ NOVO: GERENCIADOR DE ESTRATÉGIAS
+class StrategyManager:
+    """Gerencia as estratégias disponíveis"""
+    def __init__(self):
+        self.strategies = {}
+        self._load_strategies()
+    def _load_strategies(self):
+        """Carrega todas as estratégias disponíveis"""
+        if not STRATEGIES_AVAILABLE:
+            return
+        try:
+            self.strategies[2] = AlphaBot2MACD()
+            self.strategies[4] = AlphaBot4DigitPattern()
+            self.strategies[5] = AlphaBot5EMA()
+        except Exception as e:
+            print(f"⚠️ Erro ao carregar estratégias: {e}")
+    def get_strategy(self, bot_number):
+        """Retorna estratégia baseada no número do bot"""
+        return self.strategies.get(bot_number)
+    def list_strategies(self):
+        """Lista todas as estratégias disponíveis"""
+        return {
+            num: strategy.get_info()
+            for num, strategy in self.strategies.items()
+        }
