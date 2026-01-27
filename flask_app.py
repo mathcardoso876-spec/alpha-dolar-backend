@@ -1,6 +1,5 @@
 """
-ALPHA DOLAR 2.0 - API Flask (REGISTROS + INTEGRAÇÃO FRONTEND)
-Backend para Alpha Dolar 2.0
+ALPHA DOLAR 2.0 - API Flask (ESTADO CORRETO + FRONTEND OK)
 """
 
 from flask import Flask, jsonify, request
@@ -16,15 +15,36 @@ from collections import deque
 # ===============================
 
 app = Flask(__name__)
-
-# ===============================
-# 🌍 CORS LIBERADO (GLOBAL)
-# ===============================
-
 CORS(app)
 
 # ===============================
-# ❤️ ROTA RAIZ (EVITA ERRO 404 NO RENDER)
+# 🔥 CONFIG
+# ===============================
+
+MAX_TRADES_HISTORY = 100
+
+# ===============================
+# 🧠 ESTADO DO BOT
+# ===============================
+
+def create_bot_state():
+    return {
+        'running': False,
+        'stats': {},
+        'start_time': None,        # quando o bot iniciou
+        'last_trade_time': None,   # controle de intervalo de trades
+        'trades': deque(maxlen=MAX_TRADES_HISTORY)
+    }
+
+bot_states = {
+    'manual': create_bot_state(),
+    'ia-simples': create_bot_state(),
+    'ia-avancado': create_bot_state(),
+    'ia': create_bot_state()
+}
+
+# ===============================
+# ❤️ ROTA RAIZ
 # ===============================
 
 @app.route('/')
@@ -38,52 +58,18 @@ def home():
             "/api/bot/stop",
             "/api/bot/stats/<bot_type>",
             "/api/bot/trades/<bot_type>",
-            "/api/account/balance",
-            "/teste123"
+            "/api/account/balance"
         ]
     })
 
 # ===============================
-# 🧪 ROTA TESTE
-# ===============================
-
-@app.route('/teste123')
-def teste123():
-    return "ROTA TESTE OK ✅", 200
-
-# ===============================
-# 🔥 ESTADO GLOBAL DOS BOTS
-# ===============================
-
-MAX_TRADES_HISTORY = 100
-
-def create_bot_state():
-    return {
-        'running': False,
-        'stats': {},
-        'start_time': None,
-        'trades': deque(maxlen=MAX_TRADES_HISTORY)
-    }
-
-bot_states = {
-    'manual': create_bot_state(),
-    'ia-simples': create_bot_state(),
-    'ia-avancado': create_bot_state(),
-    'ia': create_bot_state()
-}
-
-# ===============================
-# 💰 GET ACCOUNT BALANCE
+# 💰 ACCOUNT BALANCE
 # ===============================
 
 @app.route('/api/account/balance', methods=['GET'])
 def get_balance():
     acc_type = request.args.get('type', 'demo')
-
-    if acc_type == 'real':
-        balance = 100.00
-    else:
-        balance = 50.00
+    balance = 100.00 if acc_type == 'real' else 50.00
 
     return jsonify({
         "balance": balance,
@@ -98,21 +84,26 @@ def get_balance():
 def start_bot():
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
-    
+
     data = request.json or {}
     bot_type = data.get('bot_type')
 
     if bot_type not in bot_states:
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 400
 
-    if bot_states[bot_type]['running']:
+    bot = bot_states[bot_type]
+
+    if bot['running']:
         return jsonify({'success': False, 'error': 'Bot já está rodando'}), 400
 
-    bot_states[bot_type]['running'] = True
-    bot_states[bot_type]['start_time'] = time.time()
-    bot_states[bot_type]['trades'].clear()
+    now = time.time()
 
-    bot_states[bot_type]['stats'] = {
+    bot['running'] = True
+    bot['start_time'] = now
+    bot['last_trade_time'] = now
+    bot['trades'].clear()
+
+    bot['stats'] = {
         'balance': 10000.00,
         'saldo_liquido': 0.00,
         'win_rate': 0.0,
@@ -136,7 +127,7 @@ def start_bot():
 def stop_bot():
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
-    
+
     data = request.json or {}
     bot_type = data.get('bot_type')
 
@@ -151,17 +142,17 @@ def stop_bot():
     })
 
 # ===============================
-# 📊 BOT STATS + SIMULA TRADES
+# 📊 BOT STATS
 # ===============================
 
 @app.route('/api/bot/stats/<bot_type>', methods=['GET', 'OPTIONS'])
 def bot_stats(bot_type):
     if request.method == 'OPTIONS':
         return jsonify({'status': 'ok'}), 200
-    
+
     if bot_type not in bot_states:
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
-    
+
     bot = bot_states[bot_type]
 
     if not bot['running']:
@@ -171,22 +162,21 @@ def bot_stats(bot_type):
             'stats': bot.get('stats', {})
         })
 
-    stats = bot['stats']
-    elapsed = time.time() - bot['start_time']
+    elapsed = time.time() - bot['last_trade_time']
 
-    # ⏱️ Simula um trade a cada 6 segundos
+    # ⏱️ gera trade a cada 6s
     if elapsed > 6:
         gerar_trade(bot)
-        bot['start_time'] = time.time()
+        bot['last_trade_time'] = time.time()
 
     return jsonify({
         'success': True,
         'bot_running': True,
-        'stats': stats
+        'stats': bot['stats']
     })
 
 # ===============================
-# 🧾 REGISTROS DE TRADES
+# 🧾 TRADES
 # ===============================
 
 @app.route('/api/bot/trades/<bot_type>', methods=['GET'])
@@ -194,15 +184,14 @@ def get_trades(bot_type):
     if bot_type not in bot_states:
         return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
 
-    trades = list(bot_states[bot_type]['trades'])
     return jsonify({
         'success': True,
-        'total': len(trades),
-        'trades': trades
+        'total': len(bot_states[bot_type]['trades']),
+        'trades': list(bot_states[bot_type]['trades'])
     })
 
 # ===============================
-# ❤️ HEALTH CHECK
+# ❤️ HEALTH
 # ===============================
 
 @app.route('/api/health', methods=['GET'])
@@ -213,7 +202,7 @@ def health():
     })
 
 # ===============================
-# ⚙️ FUNÇÃO DE SIMULAÇÃO
+# ⚙️ SIMULA TRADE
 # ===============================
 
 def gerar_trade(bot):
