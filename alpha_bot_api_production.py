@@ -482,12 +482,26 @@ def get_bot_stats(bot_type):
 
     # Se bot está iniciando mas ainda não tem instância
     if status == 'starting' and not bot:
+        # Busca saldo real da conta
+        saldo_real = 10000.00 if current_account_mode == 'demo' else 0.00
+        
+        # Tenta buscar saldo real mesmo sem bot rodando
+        if BOTS_AVAILABLE:
+            try:
+                from deriv_api import DerivAPI
+                temp_api = DerivAPI()
+                if temp_api.connect() and temp_api.authorize():
+                    saldo_real = temp_api.balance
+                    temp_api.disconnect()
+            except:
+                pass
+        
         return jsonify({
             'success': True,
             'bot_running': True,
             'status': 'starting',
             'message': 'Bot iniciando, aguarde...',
-            'balance': 10000.00 if current_account_mode == 'demo' else 0.00,
+            'balance': saldo_real,
             'saldo_liquido': 0.00,
             'win_rate': 0.0,
             'total_trades': 0,
