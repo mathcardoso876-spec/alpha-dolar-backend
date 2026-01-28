@@ -539,6 +539,32 @@ def get_bot_stats(bot_type):
         'mode': current_account_mode.upper()
     })
 
+@app.route('/api/bot/trades/<bot_type>')
+def get_bot_trades(bot_type):
+    """
+    Retorna lista de trades de um bot específico
+    """
+    if bot_type not in bots_state:
+        return jsonify({'success': False, 'error': 'Bot não encontrado'}), 404
+
+    state = bots_state[bot_type]
+    bot = state.get('instance')
+
+    trades = []
+
+    if BOTS_AVAILABLE and bot and hasattr(bot, 'stop_loss'):
+        try:
+            stats = bot.stop_loss.get_estatisticas()
+            trades = stats.get('trades', [])
+        except Exception as e:
+            print(f"⚠️ Erro ao buscar trades: {e}")
+
+    return jsonify({
+        'success': True,
+        'trades': trades,
+        'total': len(trades)
+    })
+
 @app.route('/api/bot/reset/<bot_type>', methods=['POST'])
 def reset_bot(bot_type):
     """Reseta estado do bot"""
