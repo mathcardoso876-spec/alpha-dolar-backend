@@ -3,7 +3,7 @@
 ALPHA DOLAR 2.0 - API PRODUCTION INTEGRADA
 API Flask que conecta frontend web com bots Python reais
 VERSÃO COM SISTEMA DEMO/REAL: Permite alternar entre contas
-VERSÃO CORRIGIDA: Resposta rápida + inicialização em background
+VERSÃO CORRIGIDA: Resposta rápida + inicialização em background + FIX estado inconsistente
 """
 
 from flask import Flask, request, jsonify
@@ -229,7 +229,7 @@ def health():
     return jsonify({
         'status': 'ok',
         'message': 'Alpha Dolar API Running on Render',
-        'version': '2.0.6-FIXED',
+        'version': '2.0.7-FIXED',
         'bots_available': BOTS_AVAILABLE,
         'config_loaded': CONFIG_LOADED,
         'demo_token_configured': bool(DERIV_TOKEN_DEMO),
@@ -262,6 +262,7 @@ def get_bots_status():
 def start_bot():
     """
     🔥 VERSÃO CORRIGIDA: Responde IMEDIATAMENTE e inicia bot em background
+    🔥 FIX: Reseta estado inconsistente antes de verificar se está rodando
     """
     try:
         data = request.get_json()
@@ -302,6 +303,28 @@ def start_bot():
                 'status': 'stopped'
             }
 
+        # 🔥 FIX: RESETA ESTADO INCONSISTENTE
+        # Se bot está marcado como running mas não tem instância válida, reseta
+        if bots_state[bot_type].get('running', False):
+            bot_instance = bots_state[bot_type].get('instance')
+            
+            # Verifica se a instância realmente está rodando
+            is_really_running = False
+            if bot_instance:
+                if hasattr(bot_instance, 'running'):
+                    is_really_running = bot_instance.running
+                elif hasattr(bot_instance, 'api') and hasattr(bot_instance.api, 'ws'):
+                    is_really_running = bot_instance.api.ws is not None
+            
+            # Se estado está inconsistente (marcado como running mas não rodando de verdade)
+            if not is_really_running:
+                print(f"⚠️ Estado inconsistente detectado - resetando bot {bot_type}")
+                bots_state[bot_type]['running'] = False
+                bots_state[bot_type]['status'] = 'stopped'
+                bots_state[bot_type]['instance'] = None
+                bots_state[bot_type]['thread'] = None
+
+        # Agora verifica se está rodando
         if bots_state[bot_type].get('running', False):
             return jsonify({
                 'success': False,
@@ -427,6 +450,8 @@ def stop_bot():
         # SEMPRE marca como parado
         bots_state[bot_type]['running'] = False
         bots_state[bot_type]['status'] = 'stopped'
+        bots_state[bot_type]['instance'] = None
+        bots_state[bot_type]['thread'] = None
 
         stats = {}
         if bot and BOTS_AVAILABLE and hasattr(bot, 'stop_loss'):
@@ -639,7 +664,7 @@ if __name__ == '__main__':
     
     print("\n" + "=" * 70)
     print("🚀 ALPHA DOLAR 2.0 - API PRODUCTION (RENDER.COM)")
-    print("✨ VERSÃO 2.0.6 - CORRIGIDA (RESPOSTA RÁPIDA)")
+    print("✨ VERSÃO 2.0.7 - CORRIGIDA (FIX ESTADO INCONSISTENTE)")
     if BOTS_AVAILABLE:
         print("✅ BOTS PYTHON REAIS INTEGRADOS!")
     else:
